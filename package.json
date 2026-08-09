@@ -2,7 +2,7 @@
 	"private": true,
 	"name": "gotify-web-extension",
 	"description": "Desktop native notifications for self-hosted Gotify from a browser extension.",
-	"version": "1.0.0",
+	"version": "1.1.0",
 	"license": "MIT",
 	"type": "module",
 	"dependencies": {
@@ -32,6 +32,7 @@
 		"build:chrome": "extension build --browser chrome",
 		"build:firefox": "extension build --browser firefox",
 		"build:edge": "extension build --browser edge",
+		"test": "bun test",
 		"check": "bunx --bun @biomejs/biome check --write"
 	},
 	"packageManager": "bun@1.3.14"

@@ -34,6 +34,7 @@ export const useGotify = () => {
 	>([]);
 
 	const lastStateError = useRef<string>();
+	const messagesRequestId = useRef(0);
 
 	const showError = useCallback((message: string) => {
 		enqueueSnackbar({ message, variant: "error" });
@@ -71,11 +72,13 @@ export const useGotify = () => {
 
 	const loadMessages = useCallback(
 		async (applicationId?: number) => {
+			const requestId = ++messagesRequestId.current;
 			setMessagesLoading(true);
 			const response = await sendMessage({
 				type: "gotify/load-messages",
 				applicationId,
 			});
+			if (requestId !== messagesRequestId.current) return;
 			setMessagesLoading(false);
 			if (!response.ok) {
 				showError(response.error);
@@ -109,6 +112,8 @@ export const useGotify = () => {
 	}, [applyState]);
 
 	const login = async () => {
+		messagesRequestId.current += 1;
+		setMessagesLoading(false);
 		setSubmitting(true);
 		const payload: LoginPayload = { baseUrl, token };
 		const response = await sendMessage({ type: "gotify/login", payload });
@@ -118,6 +123,8 @@ export const useGotify = () => {
 	};
 
 	const logout = async (onSuccess?: () => void) => {
+		messagesRequestId.current += 1;
+		setMessagesLoading(false);
 		setSubmitting(true);
 		const response = await sendMessage({ type: "gotify/logout" });
 		setSubmitting(false);

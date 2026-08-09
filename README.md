@@ -17,7 +17,7 @@ The project is designed for people who already operate a Gotify instance and wan
 ## Features
 
 - Connect to a self-hosted Gotify server with a client token.
-- Poll for new messages in the background.
+- Poll the Gotify server for new messages on a configurable interval with alarms-based recovery.
 - Display native desktop notifications for incoming messages.
 - Browse recent messages and filter them by application.
 - Display application names and logos from the connected Gotify server.
@@ -101,8 +101,10 @@ The extension requests permissions for:
 - `notifications`, to display native desktop notifications.
 - `alarms`, where supported by the target browser for scheduled background work.
 - HTTP and HTTPS host access, to communicate with the configured Gotify server.
+- Network request rules, scoped to this extension's Gotify deletion requests, to remove the browser-added extension origin that Gotify rejects for cross-origin API access.
 
 Tokens should be treated like passwords. Do not commit tokens, server credentials, generated profiles, or build output containing private data.
+
 
 ## Project Status
 

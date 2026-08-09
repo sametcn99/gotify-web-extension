@@ -61,7 +61,9 @@ export interface RuntimeState {
 	status: ConnectionStatus;
 	error?: string;
 	lastSyncAt?: number;
-	lastMessageSince?: number;
+	lastProcessedMessageId?: number;
+	/** @deprecated Migrated to lastProcessedMessageId. */
+	lastNotifiedMessageId?: number;
 	notificationBaselineId?: number;
 	notificationsInitialized?: boolean;
 	user?: CurrentUser;
