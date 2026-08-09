@@ -16,7 +16,7 @@ The project is designed for people who already operate a Gotify instance and wan
 
 ## Features
 
-- Connect to a self-hosted Gotify server with an application or client token.
+- Connect to a self-hosted Gotify server with a client token.
 - Poll for new messages in the background.
 - Display native desktop notifications for incoming messages.
 - Browse recent messages and filter them by application.
@@ -46,7 +46,7 @@ Prerequisites:
 
 - [Bun](https://bun.sh/) 1.3 or newer.
 - A reachable Gotify server.
-- A Gotify token with permission to read messages and manage them as required by your workflow.
+- A Gotify client token with permission to read and delete messages.
 
 Clone the repository and install dependencies:
 
@@ -85,7 +85,7 @@ bun run dev -- --browser=edge
 
 1. Open the extension from the browser toolbar.
 2. Enter the base URL of your Gotify server, such as `https://gotify.example.com`.
-3. Enter a Gotify token and sign in.
+3. Enter a Gotify client token and sign in. Application tokens cannot delete messages.
 4. Select **All Messages** or an individual application from the sidebar.
 5. Open settings to adjust polling and notification behavior.
 
