@@ -1,0 +1,111 @@
+name: Release extension
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and release extension
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Check whether the version changed
+        id: version
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ "$BEFORE_SHA" == "0000000000000000000000000000000000000000" ]]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          previous_version=$(git show "$BEFORE_SHA:package.json" | jq -r '.version')
+          current_version=$(jq -r '.version' package.json)
+
+          if [[ "$previous_version" == "$current_version" ]]; then
+            echo "package.json version did not change ($current_version); skipping release."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Version changed from $previous_version to $current_version."
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install dependencies
+        if: steps.version.outputs.changed == 'true'
+        run: bun install --frozen-lockfile
+
+      - name: Read package version
+        if: steps.version.outputs.changed == 'true'
+        id: package
+        shell: bash
+        run: echo "version=$(jq -r '.version' package.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Build browser packages
+        if: steps.version.outputs.changed == 'true'
+        shell: bash
+        env:
+          VERSION: ${{ steps.package.outputs.version }}
+        run: |
+          set -euo pipefail
+          rm -rf release-assets
+          mkdir -p release-assets
+
+          for browser in chrome chromium edge firefox; do
+            filename="gotify-web-extension-${browser}-v${VERSION}.zip"
+            bunx --bun extension build \
+              --browser "$browser" \
+              --zip \
+              --zip-filename "$filename" \
+              --silent
+
+            zip_path=$(find dist -type f -name "$filename" -print -quit)
+            if [[ -z "$zip_path" ]]; then
+              echo "Could not find build archive: $filename" >&2
+              exit 1
+            fi
+
+            cp "$zip_path" "release-assets/$filename"
+          done
+
+          ls -lh release-assets
+
+      - name: Create or update GitHub release
+        if: steps.version.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.package.outputs.version }}
+        run: |
+          set -euo pipefail
+          tag="v${VERSION}"
+
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" release-assets/*.zip --clobber
+          else
+            gh release create "$tag" \
+              release-assets/*.zip \
+              --title "Gotify Web Extension ${VERSION}" \
+              --generate-notes
+          fi

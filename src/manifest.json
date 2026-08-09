@@ -1,0 +1,56 @@
+{
+	"$schema": "https://json.schemastore.org/chrome-manifest.json",
+	"chromium:manifest_version": 3,
+	"firefox:manifest_version": 2,
+	"version": "1.0.0",
+	"firefox:browser_specific_settings": {
+		"gecko": {
+			"data_collection_permissions": {
+				"required": ["none"]
+			}
+		}
+	},
+	"name": "gotify-web-extension",
+	"description": "Receive native desktop notifications from your self-hosted Gotify server.",
+	"icons": {
+		"16": "images/icon.png",
+		"32": "images/icon.png",
+		"48": "images/icon.png",
+		"64": "images/icon.png",
+		"128": "images/icon.png"
+	},
+	"chromium:action": {
+		"default_icon": {
+			"16": "images/icon.png",
+			"32": "images/icon.png",
+			"48": "images/icon.png",
+			"64": "images/icon.png",
+			"128": "images/icon.png"
+		},
+		"default_title": "Open Gotify"
+	},
+	"firefox:browser_action": {
+		"default_icon": {
+			"16": "images/icon.png",
+			"32": "images/icon.png",
+			"48": "images/icon.png",
+			"64": "images/icon.png",
+			"128": "images/icon.png"
+		},
+		"default_title": "Open Gotify"
+	},
+	"options_page": "options/index.html",
+	"host_permissions": ["http://*/*", "https://*/*"],
+	"chromium:permissions": ["storage", "notifications", "alarms"],
+	"firefox:permissions": [
+		"storage",
+		"notifications",
+		"alarms",
+		"http://*/*",
+		"https://*/*"
+	],
+	"background": {
+		"chromium:service_worker": "background.ts",
+		"firefox:scripts": ["background.ts"]
+	}
+}
