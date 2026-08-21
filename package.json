@@ -2,7 +2,7 @@
 	"private": true,
 	"name": "gotify-web-extension",
 	"description": "Desktop native notifications for self-hosted Gotify from a browser extension.",
-	"version": "1.1.0",
+	"version": "1.1.1",
 	"license": "MIT",
 	"type": "module",
 	"dependencies": {
