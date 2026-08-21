@@ -93,6 +93,7 @@ const App = () => {
 					submitting={submitting}
 					themeMode={themeMode}
 					themeIcon={themeIcon}
+					updateInfo={state.updateInfo}
 					onToggleNav={() => setNavOpen((prev) => !prev)}
 					onRefresh={() => void handleRefresh()}
 					onOpenSettings={() => setSettingsOpen(true)}

@@ -57,6 +57,12 @@ export type ConnectionStatus =
 	| "connected"
 	| "error";
 
+export interface UpdateInfo {
+	currentVersion: string;
+	latestVersion: string;
+	releaseUrl: string;
+}
+
 export interface RuntimeState {
 	status: ConnectionStatus;
 	error?: string;
@@ -73,6 +79,8 @@ export interface RuntimeState {
 	recentMessages: GotifyMessage[];
 	/** Messages received while the extension UI was not visible. */
 	unreadCount?: number;
+	/** Set only when a newer GitHub release than the installed version exists. */
+	updateInfo?: UpdateInfo;
 }
 
 export interface LoginPayload {

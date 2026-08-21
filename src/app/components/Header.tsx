@@ -3,6 +3,7 @@ import GitHub from "@mui/icons-material/GitHub";
 import MenuIcon from "@mui/icons-material/Menu";
 import Refresh from "@mui/icons-material/Refresh";
 import Settings from "@mui/icons-material/Settings";
+import SystemUpdateAlt from "@mui/icons-material/SystemUpdateAlt";
 import {
 	AppBar,
 	IconButton,
@@ -11,6 +12,7 @@ import {
 	Tooltip,
 	Typography,
 } from "@mui/material";
+import type { UpdateInfo } from "../../shared/types";
 
 interface HeaderProps {
 	authenticated: boolean;
@@ -18,6 +20,7 @@ interface HeaderProps {
 	submitting: boolean;
 	themeMode: string;
 	themeIcon: React.ReactNode;
+	updateInfo?: UpdateInfo;
 	onToggleNav: () => void;
 	onRefresh: () => void;
 	onOpenSettings: () => void;
@@ -31,6 +34,7 @@ export const Header = ({
 	submitting,
 	themeMode,
 	themeIcon,
+	updateInfo,
 	onToggleNav,
 	onRefresh,
 	onOpenSettings,
@@ -101,6 +105,23 @@ export const Header = ({
 								</IconButton>
 							</Tooltip>
 						</>
+					)}
+					{updateInfo && (
+						<Tooltip
+							title={`Update available: v${updateInfo.latestVersion} (current: v${updateInfo.currentVersion})`}
+							arrow
+						>
+							<IconButton
+								color="warning"
+								component="a"
+								href={updateInfo.releaseUrl}
+								target="_blank"
+								rel="noopener noreferrer"
+								aria-label="Update available"
+							>
+								<SystemUpdateAlt />
+							</IconButton>
+						</Tooltip>
 					)}
 					<Tooltip title={`Toggle theme (current: ${themeMode})`} arrow>
 						<IconButton

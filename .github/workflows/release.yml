@@ -59,6 +59,16 @@ jobs:
         shell: bash
         run: echo "version=$(jq -r '.version' package.json)" >> "$GITHUB_OUTPUT"
 
+      - name: Sync manifest version
+        if: steps.version.outputs.changed == 'true'
+        shell: bash
+        env:
+          VERSION: ${{ steps.package.outputs.version }}
+        run: |
+          set -euo pipefail
+          jq --arg version "$VERSION" '.version = $version' src/manifest.json > src/manifest.json.tmp
+          mv src/manifest.json.tmp src/manifest.json
+
       - name: Build browser packages
         if: steps.version.outputs.changed == 'true'
         shell: bash

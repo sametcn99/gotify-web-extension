@@ -14,6 +14,7 @@ import {
 	normalizeMessagePreview,
 } from "./background/message-state";
 import { canNotifyMessage, notifyMessages } from "./background/notifications";
+import { checkForUpdate } from "./background/update-check";
 import {
 	clearConfig,
 	DEFAULT_NOTIFICATION_SETTINGS,
@@ -35,6 +36,8 @@ import type {
 
 const UI_PATH = "index.html";
 const POLL_ALARM_NAME = "gotify.poll.messages";
+const UPDATE_CHECK_ALARM_NAME = "gotify.check.update";
+const UPDATE_CHECK_INTERVAL_MINUTES = 12 * 60;
 const MIN_POLL_INTERVAL_SECONDS = 5;
 const MAX_POLL_INTERVAL_SECONDS = 3600;
 const MAX_RECENT_MESSAGES = 40;
@@ -647,6 +650,33 @@ const openUi = async (): Promise<void> => {
 	await openUiTab();
 };
 
+const UPDATE_CHECK_STORAGE_KEY = "gotify.updateCheckedAt";
+const MIN_UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
+
+// Guarded by a stored timestamp (not just the alarm) because this also runs
+// on every service worker wake-up, which can happen far more often than the
+// alarm fires and would otherwise burn through GitHub's rate limit.
+const runUpdateCheck = async (): Promise<void> => {
+	const stored = await browser.storage.local.get(UPDATE_CHECK_STORAGE_KEY);
+	const lastCheckedAt = stored[UPDATE_CHECK_STORAGE_KEY] as number | undefined;
+	if (
+		lastCheckedAt &&
+		Date.now() - lastCheckedAt < MIN_UPDATE_CHECK_INTERVAL_MS
+	) {
+		return;
+	}
+
+	try {
+		const updateInfo = await checkForUpdate();
+		await publishState({ updateInfo });
+	} catch {
+		// Transient GitHub API failures (rate limit, offline) just retry on the
+		// next check; no need to surface these as a user-facing error.
+	} finally {
+		await browser.storage.local.set({ [UPDATE_CHECK_STORAGE_KEY]: Date.now() });
+	}
+};
+
 let initializationPromise: Promise<void> | undefined;
 const initializeConnection = (): Promise<void> => {
 	if (initializationPromise) return initializationPromise;
@@ -667,6 +697,10 @@ browser.runtime.onInstalled.addListener(() => void initializeConnection());
 browser.runtime.onStartup.addListener(() => void initializeConnection());
 
 browser.alarms.onAlarm.addListener(async (alarm: { name: string }) => {
+	if (alarm.name === UPDATE_CHECK_ALARM_NAME) {
+		await runUpdateCheck();
+		return;
+	}
 	if (alarm.name !== POLL_ALARM_NAME) {
 		return;
 	}
@@ -715,3 +749,7 @@ if (isFirefoxLike) {
 }
 
 void initializeConnection();
+void runUpdateCheck();
+void browser.alarms.create(UPDATE_CHECK_ALARM_NAME, {
+	periodInMinutes: UPDATE_CHECK_INTERVAL_MINUTES,
+});
