@@ -278,6 +278,7 @@ const deleteAllMessages = async (
 					: previous.recentMessages.filter(
 							(message) => message.appid !== applicationId,
 						),
+			unreadCount: 0,
 		});
 		await saveState(next);
 		return next;
@@ -363,6 +364,20 @@ const processIncomingMessages = (
 			.filter((message) => canNotifyMessage(message, notificationSettings))
 			.sort((a, b) => a.id - b.id);
 		if (messagesToNotify.length === 0) return nextState;
+
+		const uiVisible = await isUiVisible();
+		const unreadCount = uiVisible
+			? 0
+			: (previous.unreadCount ?? 0) + messagesToNotify.length;
+		nextState = createRuntimeState(nextState, { unreadCount });
+		await saveState(nextState);
+		if (!(await isActiveConnection(config, generation))) return loadState();
+		if (uiVisible) {
+			await browserAction.setBadgeText({ text: "" });
+		} else {
+			await browserAction.setBadgeText({ text: String(unreadCount) });
+			await browserAction.setBadgeBackgroundColor({ color: "#1976d2" });
+		}
 
 		try {
 			const notificationResult = await notifyMessages(
@@ -554,10 +569,12 @@ const handleMessage = async (
 			return { ok: true, state };
 		}
 		case "gotify/clear-recent-messages": {
-			const state = await publishState({ recentMessages: [] });
+			const state = await publishState({ recentMessages: [], unreadCount: 0 });
 			await browserAction.setBadgeText({ text: "" });
 			return { ok: true, state };
 		}
+		case "gotify/mark-ui-visible":
+			return { ok: true, state: await markUiVisible() };
 		case "gotify/load-messages":
 			return loadMessages(request.applicationId);
 		case "gotify/delete-message":
@@ -602,6 +619,32 @@ const handleMessage = async (
 const openUiTab = async () => {
 	const extensionUrl = browser.runtime.getURL(UI_PATH);
 	await browser.tabs.create({ url: extensionUrl });
+};
+
+// The extension's own tab URL is visible to tabs.query() without the "tabs"
+// permission; only third-party tab URLs would be redacted.
+const isUiVisible = async (): Promise<boolean> => {
+	const extensionUrl = browser.runtime.getURL(UI_PATH);
+	try {
+		const [activeTab] = await browser.tabs.query({
+			active: true,
+			lastFocusedWindow: true,
+		});
+		return Boolean(activeTab?.url?.startsWith(extensionUrl));
+	} catch {
+		return false;
+	}
+};
+
+const markUiVisible = async (): Promise<RuntimeState> => {
+	const state = await publishState({ unreadCount: 0 });
+	await browserAction.setBadgeText({ text: "" });
+	return state;
+};
+
+const openUi = async (): Promise<void> => {
+	await markUiVisible();
+	await openUiTab();
 };
 
 let initializationPromise: Promise<void> | undefined;
@@ -663,11 +706,11 @@ const isFirefoxLike =
 
 if (isFirefoxLike) {
 	browser.browserAction.onClicked.addListener(() => {
-		void openUiTab();
+		void openUi();
 	});
 } else {
 	browserAction.onClicked.addListener(() => {
-		void openUiTab();
+		void openUi();
 	});
 }
 

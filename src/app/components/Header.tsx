@@ -44,7 +44,7 @@ export const Header = ({
 			sx={{ zIndex: (theme) => theme.zIndex.drawer + 1 }}
 		>
 			<Toolbar sx={{ justifyContent: "space-between" }}>
-				<Stack direction="row" alignItems="center" spacing={1}>
+				<Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
 					{authenticated && (
 						<IconButton
 							color="inherit"
@@ -68,7 +68,7 @@ export const Header = ({
 						Gotify
 					</Typography>
 				</Stack>
-				<Stack direction="row" alignItems="center">
+				<Stack direction="row" sx={{ alignItems: "center" }}>
 					{authenticated && (
 						<>
 							<Tooltip title="Sync messages" arrow>

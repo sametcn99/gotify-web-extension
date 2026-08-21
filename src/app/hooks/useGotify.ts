@@ -13,6 +13,11 @@ import {
 } from "../constants";
 import { sendMessage } from "../utils";
 
+interface StorageChange {
+	oldValue?: unknown;
+	newValue?: unknown;
+}
+
 export const useGotify = () => {
 	const [state, setState] = useState<RuntimeState>(initialState);
 	const [loading, setLoading] = useState(true);
@@ -33,7 +38,7 @@ export const useGotify = () => {
 		number[]
 	>([]);
 
-	const lastStateError = useRef<string>();
+	const lastStateError = useRef<string | undefined>(undefined);
 	const messagesRequestId = useRef(0);
 
 	const showError = useCallback((message: string) => {
@@ -98,8 +103,21 @@ export const useGotify = () => {
 	}, [loadState]);
 
 	useEffect(() => {
+		const markUiVisible = () => {
+			void sendMessage({ type: "gotify/mark-ui-visible" });
+		};
+		markUiVisible();
+		const onVisibilityChange = () => {
+			if (document.visibilityState === "visible") markUiVisible();
+		};
+		document.addEventListener("visibilitychange", onVisibilityChange);
+		return () =>
+			document.removeEventListener("visibilitychange", onVisibilityChange);
+	}, []);
+
+	useEffect(() => {
 		const onStorageChanged = (
-			changes: Record<string, browser.storage.StorageChange>,
+			changes: Record<string, StorageChange>,
 			areaName: string,
 		) => {
 			const nextState = changes["gotify.state"]?.newValue as

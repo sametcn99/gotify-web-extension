@@ -71,6 +71,8 @@ export interface RuntimeState {
 	notificationTargets?: Record<string, string>;
 	config?: Omit<GotifyConfig, "token"> & { hasToken: boolean };
 	recentMessages: GotifyMessage[];
+	/** Messages received while the extension UI was not visible. */
+	unreadCount?: number;
 }
 
 export interface LoginPayload {
@@ -90,6 +92,7 @@ export type BackgroundRequest =
 	| { type: "gotify/state" }
 	| { type: "gotify/sync" }
 	| { type: "gotify/clear-recent-messages" }
+	| { type: "gotify/mark-ui-visible" }
 	| { type: "gotify/load-messages"; applicationId?: number }
 	| { type: "gotify/delete-message"; messageId: number }
 	| { type: "gotify/delete-all-messages"; applicationId?: number }

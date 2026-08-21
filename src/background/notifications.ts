@@ -4,20 +4,6 @@ import type {
 	NotificationSettings,
 } from "../shared/types";
 
-type ActionApi = {
-	setBadgeText: (details: { text: string }) => Promise<void>;
-	setBadgeBackgroundColor: (details: { color: string }) => Promise<void>;
-};
-
-const browserAction =
-	(
-		browser as unknown as {
-			action?: ActionApi;
-			browserAction: ActionApi;
-		}
-	).action ??
-	(browser as unknown as { browserAction: ActionApi }).browserAction;
-
 const parseTimeOfDay = (value: string): number | undefined => {
 	const match = /^(\d{2}):(\d{2})$/.exec(value);
 	if (!match) return undefined;
@@ -115,9 +101,5 @@ export const notifyMessages = async (
 		if (targetUrl) notificationTargets[notificationId] = targetUrl;
 	}
 
-	if (messages.length > 0) {
-		await browserAction.setBadgeText({ text: String(messages.length) });
-		await browserAction.setBadgeBackgroundColor({ color: "#1976d2" });
-	}
 	return { notificationIds, targets: notificationTargets };
 };

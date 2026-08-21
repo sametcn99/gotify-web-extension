@@ -163,12 +163,16 @@ export const configureOriginBypass = async (
 	});
 };
 
+const isAbsoluteUrl = (value: string): boolean => /^https?:\/\//i.test(value);
+
 export const request = (
 	config: GotifyConfig,
 	path: string,
 	init?: RequestInit,
 ) =>
-	fetch(`${config.baseUrl}${path}`, {
+	// Gotify's paging.next is returned as a full URL already; concatenating it
+	// onto baseUrl (like our own relative paths) would double the origin.
+	fetch(isAbsoluteUrl(path) ? path : `${config.baseUrl}${path}`, {
 		credentials: "omit",
 		...(init ?? {}),
 		headers: {

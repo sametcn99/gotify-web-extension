@@ -65,10 +65,12 @@ export const SettingsDialog = ({
 						type="number"
 						value={pollIntervalSeconds}
 						onChange={(event) => onPollIntervalChange(event.target.value)}
-						inputProps={{
-							min: MIN_POLL_INTERVAL_SECONDS,
-							max: MAX_POLL_INTERVAL_SECONDS,
-							step: 1,
+						slotProps={{
+							htmlInput: {
+								min: MIN_POLL_INTERVAL_SECONDS,
+								max: MAX_POLL_INTERVAL_SECONDS,
+								step: 1,
+							},
 						}}
 						helperText={`${MIN_POLL_INTERVAL_SECONDS}-${MAX_POLL_INTERVAL_SECONDS} seconds`}
 						fullWidth
@@ -93,7 +95,7 @@ export const SettingsDialog = ({
 								onChange={(event) =>
 									onQuietHoursStartChange(event.target.value)
 								}
-								InputLabelProps={{ shrink: true }}
+								slotProps={{ inputLabel: { shrink: true } }}
 								disabled={!quietHoursEnabled}
 								fullWidth
 							/>
@@ -102,7 +104,7 @@ export const SettingsDialog = ({
 								type="time"
 								value={quietHoursEnd}
 								onChange={(event) => onQuietHoursEndChange(event.target.value)}
-								InputLabelProps={{ shrink: true }}
+								slotProps={{ inputLabel: { shrink: true } }}
 								disabled={!quietHoursEnabled}
 								fullWidth
 							/>
@@ -112,9 +114,11 @@ export const SettingsDialog = ({
 						<Box>
 							<Stack
 								direction="row"
-								justifyContent="space-between"
-								alignItems="center"
-								sx={{ mb: 0.5 }}
+								sx={{
+									justifyContent: "space-between",
+									alignItems: "center",
+									mb: 0.5,
+								}}
 							>
 								<Typography variant="subtitle2">
 									Application notifications

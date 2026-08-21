@@ -17,6 +17,7 @@ const initialState: RuntimeState = {
 	status: "logged_out",
 	notificationsInitialized: false,
 	recentMessages: [],
+	unreadCount: 0,
 };
 
 const getLocalStorage = async <T>(key: string): Promise<T | undefined> => {

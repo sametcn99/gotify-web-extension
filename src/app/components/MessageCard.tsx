@@ -52,7 +52,7 @@ export const MessageCard = ({
 			}}
 		>
 			<Stack spacing={1}>
-				<Stack direction="row" spacing={1.5} alignItems="flex-start">
+				<Stack direction="row" spacing={1.5} sx={{ alignItems: "flex-start" }}>
 					<Avatar
 						src={getImageUrl(baseUrl, application?.image)}
 						alt={`${applicationName} logo`}
