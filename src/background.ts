@@ -16,38 +16,49 @@ import {
 import { canNotifyMessage, notifyMessages } from "./background/notifications";
 import { checkForUpdate } from "./background/update-check";
 import {
-	clearConfig,
+	createInitialServerState,
+	createServerId,
 	DEFAULT_NOTIFICATION_SETTINGS,
 	DEFAULT_POLL_INTERVAL_SECONDS,
-	loadConfig,
+	loadServers,
 	loadState,
-	resetState,
-	saveConfig,
+	migrateSingleServerStorage,
+	removeServerFromState,
+	saveServers,
 	saveState,
+	sumUnreadCount,
 } from "./shared/storage";
 import type {
 	BackgroundRequest,
 	BackgroundResponse,
-	GotifyConfig,
 	GotifyMessage,
 	LoginPayload,
+	NotificationSettings,
 	RuntimeState,
+	ServerConfig,
+	ServerRuntimeState,
 } from "./shared/types";
 
 const UI_PATH = "index.html";
 const POLL_ALARM_NAME = "gotify.poll.messages";
+// Only a recovery net for per-server timers when Chromium suspends and wakes
+// the worker; Chrome may clamp anything below one minute, which is fine here.
+const POLL_RECOVERY_ALARM_PERIOD_MINUTES = 0.5;
 const UPDATE_CHECK_ALARM_NAME = "gotify.check.update";
 const UPDATE_CHECK_INTERVAL_MINUTES = 12 * 60;
 const MIN_POLL_INTERVAL_SECONDS = 5;
 const MAX_POLL_INTERVAL_SECONDS = 3600;
 const MAX_RECENT_MESSAGES = 40;
 
-let pollingTimer: ReturnType<typeof setInterval> | undefined;
-let syncInProgress = false;
+type PollingTimer = {
+	timer: ReturnType<typeof setInterval>;
+	intervalSeconds: number;
+};
+
+const pollingTimers = new Map<string, PollingTimer>();
+const syncInFlight = new Set<string>();
 let messageProcessingQueue: Promise<void> = Promise.resolve();
 let lifecycleQueue: Promise<void> = Promise.resolve();
-let connectionGeneration = 0;
-let activeConnectionGeneration: number | undefined;
 
 const runLifecycle = <T>(operation: () => Promise<T>): Promise<T> => {
 	const result = lifecycleQueue.then(operation, operation);
@@ -85,21 +96,43 @@ const browserAction =
 		}
 	).action ??
 	(browser as unknown as { browserAction: ActionLikeApi }).browserAction;
-const createRuntimeState = (
-	previous: RuntimeState,
-	update: Partial<RuntimeState>,
-): RuntimeState => ({
-	...previous,
-	...update,
-});
 
-const publishState = async (
-	partial: Partial<RuntimeState>,
+const withServerSlice = (
+	state: RuntimeState,
+	serverId: string,
+	slice: ServerRuntimeState,
+): RuntimeState => {
+	const servers = { ...state.servers, [serverId]: slice };
+	return { ...state, servers, unreadCount: sumUnreadCount(servers) };
+};
+
+const publishServerState = async (
+	serverId: string,
+	update: Partial<ServerRuntimeState>,
 ): Promise<RuntimeState> => {
 	const previous = await loadState();
-	const nextState = createRuntimeState(previous, partial);
-	await saveState(nextState);
-	return nextState;
+	const slice = previous.servers[serverId] ?? createInitialServerState();
+	const next = withServerSlice(previous, serverId, { ...slice, ...update });
+	await saveState(next);
+	return next;
+};
+
+const updateBadge = async (state?: RuntimeState): Promise<void> => {
+	const unreadCount = sumUnreadCount((state ?? (await loadState())).servers);
+	if (unreadCount > 0) {
+		await browserAction.setBadgeText({ text: String(unreadCount) });
+		await browserAction.setBadgeBackgroundColor({ color: "#1976d2" });
+	} else {
+		await browserAction.setBadgeText({ text: "" });
+	}
+};
+
+const serverHostLabel = (baseUrl: string): string => {
+	try {
+		return new URL(baseUrl).host;
+	} catch {
+		return baseUrl;
+	}
 };
 
 const normalizePollInterval = (seconds: number): number =>
@@ -108,59 +141,88 @@ const normalizePollInterval = (seconds: number): number =>
 		MAX_POLL_INTERVAL_SECONDS,
 	);
 
-const runScheduledSync = async (
-	config?: GotifyConfig,
-	generation = activeConnectionGeneration ?? -1,
-): Promise<void> => {
-	if (syncInProgress) {
-		return;
-	}
-
-	syncInProgress = true;
-	try {
-		await syncMessages(config, generation);
-	} finally {
-		syncInProgress = false;
+const stopServerPolling = (serverId: string): void => {
+	const polling = pollingTimers.get(serverId);
+	if (polling) {
+		clearInterval(polling.timer);
+		pollingTimers.delete(serverId);
 	}
 };
 
-const schedulePolling = async (config: GotifyConfig): Promise<void> => {
-	if (pollingTimer !== undefined) {
-		clearInterval(pollingTimer);
-	}
-
-	await browser.alarms.clear(POLL_ALARM_NAME);
+const scheduleServerPolling = (server: ServerConfig): void => {
 	const intervalSeconds = normalizePollInterval(
-		config.pollIntervalSeconds ?? DEFAULT_POLL_INTERVAL_SECONDS,
+		server.pollIntervalSeconds ?? DEFAULT_POLL_INTERVAL_SECONDS,
 	);
-	pollingTimer = setInterval(() => {
-		void runScheduledSync();
-	}, intervalSeconds * 1000);
-
-	// Alarms recover polling when Chromium suspends and later wakes the worker.
-	await browser.alarms.create(POLL_ALARM_NAME, {
-		periodInMinutes: Math.max(intervalSeconds, 30) / 60,
+	const existing = pollingTimers.get(server.id);
+	// Keep a live timer running when nothing changed; resetting it on every
+	// recovery alarm would starve intervals longer than the alarm period.
+	if (existing?.intervalSeconds === intervalSeconds) return;
+	if (existing) clearInterval(existing.timer);
+	pollingTimers.set(server.id, {
+		timer: setInterval(
+			() => void runScheduledSync(server.id),
+			intervalSeconds * 1000,
+		),
+		intervalSeconds,
 	});
 };
 
-const stopPolling = async (): Promise<void> => {
-	if (pollingTimer !== undefined) {
-		clearInterval(pollingTimer);
-		pollingTimer = undefined;
+const scheduleAllPolling = async (): Promise<void> => {
+	const servers = await loadServers();
+	const knownIds = new Set(servers.map((server) => server.id));
+	for (const serverId of [...pollingTimers.keys()]) {
+		if (!knownIds.has(serverId)) stopServerPolling(serverId);
 	}
-	await browser.alarms.clear(POLL_ALARM_NAME);
+	for (const server of servers) scheduleServerPolling(server);
+	await browser.alarms.create(POLL_ALARM_NAME, {
+		periodInMinutes: POLL_RECOVERY_ALARM_PERIOD_MINUTES,
+	});
+};
+
+const runScheduledSync = async (serverId: string): Promise<void> => {
+	if (syncInFlight.has(serverId)) return;
+	const server = (await loadServers()).find(
+		(candidate) => candidate.id === serverId,
+	);
+	if (!server) return;
+	syncInFlight.add(serverId);
+	try {
+		await syncServer(server);
+	} finally {
+		syncInFlight.delete(serverId);
+	}
+};
+
+const findServer = async (
+	serverId: string,
+): Promise<ServerConfig | undefined> =>
+	(await loadServers()).find((server) => server.id === serverId);
+
+// Guards every in-flight server operation the same way the pre-multi-server
+// generation counter did: if the stored server entry changed or vanished
+// (re-added, reconfigured, removed), the stale operation must not write state.
+const isActiveServerConnection = async (
+	server: ServerConfig,
+): Promise<boolean> => {
+	const stored = await findServer(server.id);
+	return Boolean(
+		stored &&
+			stored.baseUrl === server.baseUrl &&
+			stored.token === server.token,
+	);
 };
 
 const loadMessages = async (
+	serverId: string,
 	applicationId?: number,
 ): Promise<BackgroundResponse> => {
-	const config = await loadConfig();
-	if (!config) {
-		return { ok: false, error: "Login is required" };
+	const server = await findServer(serverId);
+	if (!server) {
+		return { ok: false, error: "Unknown server" };
 	}
 
 	try {
-		const messages = await fetchAllMessages(config, applicationId);
+		const messages = await fetchAllMessages(server, applicationId);
 		return { ok: true, messages };
 	} catch (error) {
 		return {
@@ -197,16 +259,16 @@ const describeHttpFailure = async (
 };
 
 const deleteMessage = async (
+	serverId: string,
 	messageId: number,
 ): Promise<BackgroundResponse> => {
-	const config = await loadConfig();
-	const generation = activeConnectionGeneration;
-	if (!config || generation === undefined) {
-		return { ok: false, error: "Login is required" };
+	const server = await findServer(serverId);
+	if (!server) {
+		return { ok: false, error: "Unknown server" };
 	}
 
 	try {
-		const response = await request(config, `/message/${messageId}`, {
+		const response = await request(server, `/message/${messageId}`, {
 			method: "DELETE",
 		});
 		if (!response.ok) {
@@ -226,10 +288,13 @@ const deleteMessage = async (
 	}
 
 	const state = await runMessageStateOperation(async () => {
-		if (!(await isActiveConnection(config, generation))) return loadState();
+		if (!(await isActiveServerConnection(server))) return loadState();
 		const previous = await loadState();
-		const next = createRuntimeState(previous, {
-			recentMessages: previous.recentMessages.filter(
+		const slice = previous.servers[serverId];
+		if (!slice) return previous;
+		const next = withServerSlice(previous, serverId, {
+			...slice,
+			recentMessages: slice.recentMessages.filter(
 				(message) => message.id !== messageId,
 			),
 		});
@@ -240,12 +305,12 @@ const deleteMessage = async (
 };
 
 const deleteAllMessages = async (
+	serverId: string,
 	applicationId?: number,
 ): Promise<BackgroundResponse> => {
-	const config = await loadConfig();
-	const generation = activeConnectionGeneration;
-	if (!config || generation === undefined) {
-		return { ok: false, error: "Login is required" };
+	const server = await findServer(serverId);
+	if (!server) {
+		return { ok: false, error: "Unknown server" };
 	}
 
 	const path =
@@ -253,7 +318,7 @@ const deleteAllMessages = async (
 			? "/message"
 			: `/application/${applicationId}/message`;
 	try {
-		const response = await request(config, path, { method: "DELETE" });
+		const response = await request(server, path, { method: "DELETE" });
 		if (!response.ok) {
 			return {
 				ok: false,
@@ -271,13 +336,16 @@ const deleteAllMessages = async (
 	}
 
 	const state = await runMessageStateOperation(async () => {
-		if (!(await isActiveConnection(config, generation))) return loadState();
+		if (!(await isActiveServerConnection(server))) return loadState();
 		const previous = await loadState();
-		const next = createRuntimeState(previous, {
+		const slice = previous.servers[serverId];
+		if (!slice) return previous;
+		const next = withServerSlice(previous, serverId, {
+			...slice,
 			recentMessages:
 				applicationId === undefined
 					? []
-					: previous.recentMessages.filter(
+					: slice.recentMessages.filter(
 							(message) => message.appid !== applicationId,
 						),
 			unreadCount: 0,
@@ -285,35 +353,21 @@ const deleteAllMessages = async (
 		await saveState(next);
 		return next;
 	});
-	if (await isActiveConnection(config, generation)) {
-		await browserAction.setBadgeText({ text: "" });
-	}
+	await updateBadge(state);
 	return { ok: true, state };
 };
 
-const isActiveConnection = async (
-	config: GotifyConfig,
-	generation: number,
-): Promise<boolean> => {
-	if (generation !== connectionGeneration) return false;
-	const activeConfig = await loadConfig();
-	return (
-		generation === connectionGeneration &&
-		activeConfig?.baseUrl === config.baseUrl &&
-		activeConfig.token === config.token
-	);
-};
-
 const processIncomingMessages = (
-	config: GotifyConfig,
+	server: ServerConfig,
 	incoming: GotifyMessage[],
-	generation = connectionGeneration,
 ): Promise<RuntimeState> => {
 	return runMessageStateOperation(async () => {
-		if (!(await isActiveConnection(config, generation))) return loadState();
-		const activeConfig = (await loadConfig()) ?? config;
+		if (!(await isActiveServerConnection(server))) return loadState();
+		const activeServer = (await findServer(server.id)) ?? server;
 		const previous = await loadState();
-		const cursor = getProcessingCursor(previous) ?? 0;
+		const previousSlice =
+			previous.servers[server.id] ?? createInitialServerState();
+		const cursor = getProcessingCursor(previousSlice) ?? 0;
 		const newMessages = deduplicateAndSortMessages(incoming).filter(
 			(message) => message.id > cursor,
 		);
@@ -321,26 +375,27 @@ const processIncomingMessages = (
 			cursor,
 			...incoming.map((message) => message.id),
 		);
-		let applications = previous.applications;
+		let applications = previousSlice.applications;
 		if (!applications) {
 			try {
-				applications = await fetchApplications(activeConfig);
+				applications = await fetchApplications(activeServer);
 			} catch {
 				// Retry on a later sync instead of caching a transient failure.
 			}
 		}
-		if (!(await isActiveConnection(config, generation))) return loadState();
+		if (!(await isActiveServerConnection(server))) return loadState();
 		const notificationSettings = {
 			...DEFAULT_NOTIFICATION_SETTINGS,
-			...activeConfig.notificationSettings,
+			...activeServer.notificationSettings,
 			disabledApplicationIds:
-				activeConfig.notificationSettings?.disabledApplicationIds ?? [],
+				activeServer.notificationSettings?.disabledApplicationIds ?? [],
 		};
 		const merged = normalizeMessagePreview(
-			[...incoming, ...previous.recentMessages],
+			[...incoming, ...previousSlice.recentMessages],
 			MAX_RECENT_MESSAGES,
 		);
-		let nextState = createRuntimeState(previous, {
+		const nextSlice: ServerRuntimeState = {
+			...previousSlice,
 			status: "connected",
 			error: undefined,
 			notificationsInitialized: true,
@@ -349,19 +404,20 @@ const processIncomingMessages = (
 			recentMessages: merged,
 			applications,
 			config: {
-				baseUrl: activeConfig.baseUrl,
-				authMode: activeConfig.authMode,
-				hasToken: Boolean(activeConfig.token),
+				baseUrl: activeServer.baseUrl,
+				authMode: activeServer.authMode,
+				hasToken: Boolean(activeServer.token),
 				pollIntervalSeconds:
-					activeConfig.pollIntervalSeconds ?? DEFAULT_POLL_INTERVAL_SECONDS,
+					activeServer.pollIntervalSeconds ?? DEFAULT_POLL_INTERVAL_SECONDS,
 				notificationSettings,
 			},
-		});
+		};
 
 		// Persist the cursor before displaying notifications. A suspended worker
 		// can then never replay an already processed message.
+		let nextState = withServerSlice(previous, server.id, nextSlice);
 		await saveState(nextState);
-		if (!(await isActiveConnection(config, generation))) return loadState();
+		if (!(await isActiveServerConnection(server))) return loadState();
 		const messagesToNotify = newMessages
 			.filter((message) => canNotifyMessage(message, notificationSettings))
 			.sort((a, b) => a.id - b.id);
@@ -370,23 +426,27 @@ const processIncomingMessages = (
 		const uiVisible = await isUiVisible();
 		const unreadCount = uiVisible
 			? 0
-			: (previous.unreadCount ?? 0) + messagesToNotify.length;
-		nextState = createRuntimeState(nextState, { unreadCount });
+			: (previousSlice.unreadCount ?? 0) + messagesToNotify.length;
+		nextState = withServerSlice(nextState, server.id, {
+			...nextSlice,
+			unreadCount,
+		});
 		await saveState(nextState);
-		if (!(await isActiveConnection(config, generation))) return loadState();
-		if (uiVisible) {
-			await browserAction.setBadgeText({ text: "" });
-		} else {
-			await browserAction.setBadgeText({ text: String(unreadCount) });
-			await browserAction.setBadgeBackgroundColor({ color: "#1976d2" });
-		}
+		if (!(await isActiveServerConnection(server))) return loadState();
+		await updateBadge(nextState);
 
 		try {
+			const serverCount = (await loadServers()).length;
 			const notificationIds = await notifyMessages(
 				messagesToNotify,
 				applications ?? {},
+				{
+					serverId: server.id,
+					serverLabel:
+						serverCount > 1 ? serverHostLabel(activeServer.baseUrl) : undefined,
+				},
 			);
-			if (!(await isActiveConnection(config, generation))) {
+			if (!(await isActiveServerConnection(server))) {
 				await Promise.all(
 					notificationIds.map((id) => browser.notifications.clear(id)),
 				);
@@ -400,24 +460,16 @@ const processIncomingMessages = (
 	});
 };
 
-const syncMessages = async (
-	providedConfig?: GotifyConfig,
-	generation = activeConnectionGeneration ?? -1,
-): Promise<RuntimeState> => {
-	const config = providedConfig ?? (await loadConfig());
-	if (!config) {
-		const state = await resetState();
-		return state;
-	}
-
+const syncServer = async (server: ServerConfig): Promise<RuntimeState> => {
 	try {
-		if (!(await isActiveConnection(config, generation))) return loadState();
+		if (!(await isActiveServerConnection(server))) return loadState();
 		const previous = await loadState();
-		let cursor = getProcessingCursor(previous);
+		const slice = previous.servers[server.id] ?? createInitialServerState();
+		let cursor = getProcessingCursor(slice);
 		if (cursor === undefined) {
-			cursor = await getLatestMessageId(config);
-			if (!(await isActiveConnection(config, generation))) return loadState();
-			return publishState({
+			cursor = await getLatestMessageId(server);
+			if (!(await isActiveServerConnection(server))) return loadState();
+			return publishServerState(server.id, {
 				status: "connected",
 				error: undefined,
 				lastSyncAt: Date.now(),
@@ -426,33 +478,37 @@ const syncMessages = async (
 				notificationsInitialized: true,
 			});
 		}
-		const incoming = await fetchMessagesAfter(config, cursor);
-		if (!(await isActiveConnection(config, generation))) return loadState();
-		return processIncomingMessages(config, incoming, generation);
+		const incoming = await fetchMessagesAfter(server, cursor);
+		if (!(await isActiveServerConnection(server))) return loadState();
+		return processIncomingMessages(server, incoming);
 	} catch (error) {
 		const message =
 			error instanceof Error ? error.message : "Unknown sync error";
-		if (!(await isActiveConnection(config, generation))) return loadState();
+		if (!(await isActiveServerConnection(server))) return loadState();
 		const previous = await loadState();
-		const next = await publishState({
-			status: previous.status === "logged_out" ? "logged_out" : "error",
+		const slice = previous.servers[server.id] ?? createInitialServerState();
+		return publishServerState(server.id, {
+			status: slice.status === "logged_out" ? "logged_out" : "error",
 			error: message,
 		});
-		return next;
 	}
 };
 
-const loginForGeneration = async (
-	payload: LoginPayload,
-	generation: number,
-): Promise<BackgroundResponse> => {
-	try {
-		await stopPolling();
+const addServer = (payload: LoginPayload): Promise<BackgroundResponse> => {
+	return runLifecycle(async () => {
 		await messageProcessingQueue;
 		const baseUrl = normalizeBaseUrl(payload.baseUrl);
 		const token = payload.token.trim();
 
-		const config: GotifyConfig = {
+		if (!baseUrl || !token) {
+			return {
+				ok: false,
+				error: "Gotify URL and client token are required",
+			};
+		}
+
+		const candidate: ServerConfig = {
+			id: createServerId(),
 			baseUrl,
 			authMode: "token",
 			token,
@@ -462,78 +518,73 @@ const loginForGeneration = async (
 			},
 		};
 
-		if (!config.baseUrl || !config.token) {
-			return {
-				ok: false,
-				error: "Gotify URL and client token are required",
+		try {
+			const user = await validateClientToken(candidate);
+			const notificationBaselineId = await getLatestMessageId(candidate);
+
+			// Network rules go in before the server becomes visible so the
+			// first sync can already issue cross-origin deletes.
+			const servers = await loadServers();
+			const nextServers = [...servers, candidate];
+			await configureOriginBypass(nextServers);
+			await saveServers(nextServers);
+
+			const previous = await loadState();
+			const connectingSlice =
+				previous.servers[candidate.id] ?? createInitialServerState();
+			const state: RuntimeState = {
+				...previous,
+				serverOrder: [...previous.serverOrder, candidate.id],
+				servers: {
+					...previous.servers,
+					[candidate.id]: {
+						...connectingSlice,
+						status: "connected",
+						error: undefined,
+						user,
+						config: {
+							baseUrl: candidate.baseUrl,
+							authMode: candidate.authMode,
+							hasToken: Boolean(candidate.token),
+						},
+						recentMessages: [],
+						lastProcessedMessageId: notificationBaselineId,
+						notificationBaselineId,
+						notificationsInitialized: false,
+						lastSyncAt: Date.now(),
+					},
+				},
 			};
-		}
+			await saveState(state);
 
-		await publishState({
-			status: "connecting",
-			error: undefined,
-		});
-
-		const user = await validateClientToken(config);
-		const notificationBaselineId = await getLatestMessageId(config);
-		if (generation !== connectionGeneration) {
-			return { ok: false, error: "Login was superseded" };
+			scheduleServerPolling(candidate);
+			const synced = await syncServer(candidate);
+			return { ok: true, state: synced, serverId: candidate.id };
+		} catch (error) {
+			const message =
+				error instanceof Error ? error.message : "Adding server failed";
+			// Drop any slice the attempt created so a failed add leaves no trace.
+			await runMessageStateOperation(async () => {
+				const cleaned = removeServerFromState(await loadState(), candidate.id);
+				await saveState(cleaned);
+			});
+			return { ok: false, error: message };
 		}
-
-		await configureOriginBypass(config);
-		if (generation !== connectionGeneration) {
-			return { ok: false, error: "Login was superseded" };
-		}
-		await saveConfig(config);
-		activeConnectionGeneration = generation;
-
-		const nextState = await publishState({
-			status: "connected",
-			error: undefined,
-			user,
-			config: {
-				baseUrl: config.baseUrl,
-				authMode: config.authMode,
-				hasToken: Boolean(config.token),
-			},
-			recentMessages: [],
-			lastProcessedMessageId: notificationBaselineId,
-			notificationBaselineId,
-			notificationsInitialized: false,
-			lastSyncAt: Date.now(),
-		});
-
-		await schedulePolling(config);
-		const synced = await syncMessages(config, generation);
-		if (generation !== connectionGeneration) {
-			return { ok: false, error: "Login was superseded" };
-		}
-		return { ok: true, state: { ...nextState, ...synced } };
-	} catch (error) {
-		const message = error instanceof Error ? error.message : "Login failed";
-		if (generation === connectionGeneration) {
-			await publishState({ status: "error", error: message });
-		}
-		return { ok: false, error: message };
-	}
+	});
 };
 
-const login = (payload: LoginPayload): Promise<BackgroundResponse> => {
-	const generation = ++connectionGeneration;
-	activeConnectionGeneration = undefined;
-	return runLifecycle(() => loginForGeneration(payload, generation));
-};
-
-const logout = (): Promise<BackgroundResponse> => {
-	connectionGeneration += 1;
-	activeConnectionGeneration = undefined;
+const removeServer = (serverId: string): Promise<BackgroundResponse> => {
 	return runLifecycle(async () => {
-		await stopPolling();
 		await messageProcessingQueue;
-		await configureOriginBypass(null);
-		await clearConfig();
-		await browserAction.setBadgeText({ text: "" });
-		const state = await resetState();
+		stopServerPolling(serverId);
+		const servers = await loadServers();
+		const nextServers = servers.filter((server) => server.id !== serverId);
+		await saveServers(nextServers);
+		await configureOriginBypass(nextServers);
+
+		const state = removeServerFromState(await loadState(), serverId);
+		await saveState(state);
+		await updateBadge(state);
 		return { ok: true, state };
 	});
 };
@@ -543,64 +594,76 @@ const getStateResponse = async (): Promise<BackgroundResponse> => {
 	return { ok: true, state };
 };
 
+const updateSettings = async (
+	serverId: string,
+	pollIntervalSeconds: number,
+	notificationSettings?: NotificationSettings,
+): Promise<BackgroundResponse> => {
+	const servers = await loadServers();
+	const server = servers.find((candidate) => candidate.id === serverId);
+	if (!server) {
+		return { ok: false, error: "Unknown server" };
+	}
+
+	const normalizedInterval = normalizePollInterval(pollIntervalSeconds);
+	const updatedServer: ServerConfig = {
+		...server,
+		pollIntervalSeconds: normalizedInterval,
+	};
+	if (notificationSettings) {
+		updatedServer.notificationSettings = {
+			...DEFAULT_NOTIFICATION_SETTINGS,
+			...notificationSettings,
+			disabledApplicationIds: notificationSettings.disabledApplicationIds,
+		};
+	}
+	await saveServers(
+		servers.map((candidate) =>
+			candidate.id === server.id ? updatedServer : candidate,
+		),
+	);
+	scheduleServerPolling(updatedServer);
+	const state = await publishServerState(server.id, {
+		config: {
+			baseUrl: updatedServer.baseUrl,
+			authMode: updatedServer.authMode,
+			hasToken: Boolean(updatedServer.token),
+			pollIntervalSeconds: normalizedInterval,
+			notificationSettings: updatedServer.notificationSettings,
+		},
+	});
+	return { ok: true, state };
+};
+
 const handleMessage = async (
 	request: BackgroundRequest,
 ): Promise<BackgroundResponse> => {
 	switch (request.type) {
-		case "gotify/login":
-			return login(request.payload);
-		case "gotify/logout":
-			return logout();
+		case "gotify/add-server":
+			return addServer(request.payload);
+		case "gotify/remove-server":
+			return removeServer(request.serverId);
 		case "gotify/state":
 			return getStateResponse();
 		case "gotify/sync": {
-			await runScheduledSync();
-			const state = await loadState();
-			return { ok: true, state };
-		}
-		case "gotify/clear-recent-messages": {
-			const state = await publishState({ recentMessages: [], unreadCount: 0 });
-			await browserAction.setBadgeText({ text: "" });
-			return { ok: true, state };
+			const servers = await loadServers();
+			await Promise.all(servers.map((server) => runScheduledSync(server.id)));
+			return { ok: true, state: await loadState() };
 		}
 		case "gotify/mark-ui-visible":
 			return { ok: true, state: await markUiVisible() };
 		case "gotify/load-messages":
-			return loadMessages(request.applicationId);
+			return loadMessages(request.serverId, request.applicationId);
 		case "gotify/delete-message":
-			return deleteMessage(request.messageId);
+			return deleteMessage(request.serverId, request.messageId);
 		case "gotify/delete-all-messages":
-			return deleteAllMessages(request.applicationId);
-		case "gotify/update-settings": {
-			const config = await loadConfig();
-			if (!config) {
-				return { ok: false, error: "Login is required" };
-			}
-			const pollIntervalSeconds = normalizePollInterval(
+			return deleteAllMessages(request.serverId, request.applicationId);
+		case "gotify/update-settings":
+			return updateSettings(
+				request.serverId,
 				request.pollIntervalSeconds,
+				request.notificationSettings,
 			);
-			const updatedConfig = { ...config, pollIntervalSeconds };
-			if (request.notificationSettings) {
-				updatedConfig.notificationSettings = {
-					...DEFAULT_NOTIFICATION_SETTINGS,
-					...request.notificationSettings,
-					disabledApplicationIds:
-						request.notificationSettings.disabledApplicationIds,
-				};
-			}
-			await saveConfig(updatedConfig);
-			await schedulePolling(updatedConfig);
-			const state = await publishState({
-				config: {
-					baseUrl: updatedConfig.baseUrl,
-					authMode: updatedConfig.authMode,
-					hasToken: Boolean(updatedConfig.token),
-					pollIntervalSeconds,
-					notificationSettings: updatedConfig.notificationSettings,
-				},
-			});
-			return { ok: true, state };
-		}
 		default:
 			return { ok: false, error: "Unknown request type" };
 	}
@@ -627,8 +690,23 @@ const isUiVisible = async (): Promise<boolean> => {
 };
 
 const markUiVisible = async (): Promise<RuntimeState> => {
-	const state = await publishState({ unreadCount: 0 });
-	await browserAction.setBadgeText({ text: "" });
+	const state = await runMessageStateOperation(async () => {
+		const previous = await loadState();
+		const servers = Object.fromEntries(
+			Object.entries(previous.servers).map(([serverId, slice]) => [
+				serverId,
+				{ ...slice, unreadCount: 0 },
+			]),
+		);
+		const next: RuntimeState = {
+			...previous,
+			servers,
+			unreadCount: 0,
+		};
+		await saveState(next);
+		return next;
+	});
+	await updateBadge(state);
 	return state;
 };
 
@@ -655,7 +733,10 @@ const runUpdateCheck = async (): Promise<void> => {
 
 	try {
 		const updateInfo = await checkForUpdate();
-		await publishState({ updateInfo });
+		await runMessageStateOperation(async () => {
+			const state = await loadState();
+			await saveState({ ...state, updateInfo });
+		});
 	} catch {
 		// Transient GitHub API failures (rate limit, offline) just retry on the
 		// next check; no need to surface these as a user-facing error.
@@ -667,15 +748,12 @@ const runUpdateCheck = async (): Promise<void> => {
 let initializationPromise: Promise<void> | undefined;
 const initializeConnection = (): Promise<void> => {
 	if (initializationPromise) return initializationPromise;
-	const generation = ++connectionGeneration;
 	initializationPromise = runLifecycle(async () => {
-		const config = await loadConfig();
-		if (generation !== connectionGeneration) return;
-		await configureOriginBypass(config);
-		if (generation !== connectionGeneration || !config) return;
-		activeConnectionGeneration = generation;
-		await schedulePolling(config);
-		await syncMessages(config, generation);
+		await migrateSingleServerStorage();
+		const servers = await loadServers();
+		await configureOriginBypass(servers);
+		await scheduleAllPolling();
+		await Promise.all(servers.map((server) => syncServer(server)));
 	});
 	return initializationPromise;
 };
@@ -691,7 +769,15 @@ browser.alarms.onAlarm.addListener(async (alarm: { name: string }) => {
 	if (alarm.name !== POLL_ALARM_NAME) {
 		return;
 	}
-	await runScheduledSync();
+	// An empty timer map means the worker was suspended and just woke up:
+	// recreate the per-server timers and catch up once. While the worker is
+	// alive the intervals drive syncing, so the alarm stays a no-op.
+	const servers = await loadServers();
+	const recovered = pollingTimers.size === 0 && servers.length > 0;
+	await scheduleAllPolling();
+	if (recovered) {
+		await Promise.all(servers.map((server) => runScheduledSync(server.id)));
+	}
 });
 
 browser.runtime.onMessage.addListener(async (request: unknown) => {

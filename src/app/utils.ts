@@ -43,6 +43,14 @@ export const getImageUrl = (
 	return `${cleanBase}/${cleanPath}`;
 };
 
+export const serverHostname = (baseUrl: string): string => {
+	try {
+		return new URL(baseUrl).host;
+	} catch {
+		return baseUrl;
+	}
+};
+
 export const sendMessage = async (
 	message: BackgroundRequest,
 ): Promise<BackgroundResponse> =>

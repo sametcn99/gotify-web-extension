@@ -3,7 +3,7 @@ import {
 	deduplicateAndSortMessages,
 	getProcessingCursor,
 } from "../src/background/message-state";
-import type { GotifyMessage, RuntimeState } from "../src/shared/types";
+import type { GotifyMessage, ServerRuntimeState } from "../src/shared/types";
 
 const message = (id: number): GotifyMessage => ({
 	id,
@@ -15,7 +15,7 @@ const message = (id: number): GotifyMessage => ({
 });
 
 test("migrates legacy state using the highest known message id", () => {
-	const legacyState: RuntimeState = {
+	const legacyState: ServerRuntimeState = {
 		status: "connected",
 		notificationBaselineId: 100,
 		recentMessages: [message(140), message(139)],
@@ -25,7 +25,7 @@ test("migrates legacy state using the highest known message id", () => {
 });
 
 test("prefers the highest cursor across old and new state fields", () => {
-	const state: RuntimeState = {
+	const state: ServerRuntimeState = {
 		status: "connected",
 		lastProcessedMessageId: 150,
 		lastNotifiedMessageId: 145,
@@ -49,7 +49,7 @@ test("cursor-less legacy state rebaselines instead of using old paging state", (
 		status: "connected",
 		lastMessageSince: 25,
 		recentMessages: [],
-	} as unknown as RuntimeState;
+	} as unknown as ServerRuntimeState;
 
 	expect(getProcessingCursor(legacyState)).toBeUndefined();
 });

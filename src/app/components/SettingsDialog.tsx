@@ -1,14 +1,18 @@
+import DeleteOutlined from "@mui/icons-material/DeleteOutlined";
 import {
 	Box,
 	Button,
+	Chip,
 	Dialog,
 	DialogActions,
 	DialogContent,
 	DialogTitle,
 	FormControlLabel,
+	IconButton,
 	Stack,
 	Switch,
 	TextField,
+	Tooltip,
 	Typography,
 } from "@mui/material";
 import type { GotifyApplication } from "../../shared/types";
@@ -16,10 +20,14 @@ import {
 	MAX_POLL_INTERVAL_SECONDS,
 	MIN_POLL_INTERVAL_SECONDS,
 } from "../constants";
+import type { ServerListItem } from "../hooks/useGotify";
+import { serverHostname } from "../utils";
 
 interface SettingsDialogProps {
 	open: boolean;
 	submitting: boolean;
+	servers: ServerListItem[];
+	activeServerId?: string;
 	pollIntervalSeconds: string;
 	quietHoursEnabled: boolean;
 	quietHoursStart: string;
@@ -28,6 +36,8 @@ interface SettingsDialogProps {
 	applications: GotifyApplication[];
 	onClose: () => void;
 	onSave: () => void;
+	onAddServer: () => void;
+	onRemoveServer: (serverId: string) => void;
 	onPollIntervalChange: (value: string) => void;
 	onQuietHoursEnabledChange: (enabled: boolean) => void;
 	onQuietHoursStartChange: (start: string) => void;
@@ -40,6 +50,8 @@ interface SettingsDialogProps {
 export const SettingsDialog = ({
 	open,
 	submitting,
+	servers,
+	activeServerId,
 	pollIntervalSeconds,
 	quietHoursEnabled,
 	quietHoursStart,
@@ -48,6 +60,8 @@ export const SettingsDialog = ({
 	applications,
 	onClose,
 	onSave,
+	onAddServer,
+	onRemoveServer,
 	onPollIntervalChange,
 	onQuietHoursEnabledChange,
 	onQuietHoursStartChange,
@@ -55,10 +69,83 @@ export const SettingsDialog = ({
 	onDisabledApplicationIdsChange,
 }: SettingsDialogProps) => {
 	return (
-		<Dialog open={open} onClose={onClose} fullWidth maxWidth="xs">
-			<DialogTitle>Settings</DialogTitle>
+		<Dialog open={open} onClose={onClose} fullWidth maxWidth="sm">
+			<DialogTitle>
+				Settings
+				{activeServerId && servers.length > 1
+					? ` — ${serverHostname(
+							servers.find((server) => server.id === activeServerId)?.baseUrl ??
+								"",
+						)}`
+					: ""}
+			</DialogTitle>
 			<DialogContent>
 				<Stack spacing={2} sx={{ pt: 1 }}>
+					<Box>
+						<Stack
+							direction="row"
+							sx={{
+								justifyContent: "space-between",
+								alignItems: "center",
+								mb: 0.5,
+							}}
+						>
+							<Typography variant="subtitle2">Servers</Typography>
+							<Button size="small" onClick={onAddServer}>
+								Add server
+							</Button>
+						</Stack>
+						<Stack spacing={0.5}>
+							{servers.map((server) => (
+								<Stack
+									key={server.id}
+									direction="row"
+									spacing={1}
+									sx={{
+										alignItems: "center",
+										justifyContent: "space-between",
+										px: 1,
+										py: 0.5,
+										borderRadius: 1,
+										bgcolor:
+											server.id === activeServerId
+												? "action.selected"
+												: "transparent",
+									}}
+								>
+									<Stack
+										direction="row"
+										spacing={1}
+										sx={{ alignItems: "center" }}
+									>
+										<Typography variant="body2">
+											{serverHostname(server.baseUrl)}
+										</Typography>
+										{server.unreadCount > 0 && (
+											<Chip
+												size="small"
+												color="primary"
+												label={server.unreadCount}
+											/>
+										)}
+									</Stack>
+									<Tooltip title="Remove server" arrow>
+										<span>
+											<IconButton
+												size="small"
+												color="error"
+												aria-label={`Remove ${serverHostname(server.baseUrl)}`}
+												disabled={submitting}
+												onClick={() => onRemoveServer(server.id)}
+											>
+												<DeleteOutlined fontSize="small" />
+											</IconButton>
+										</span>
+									</Tooltip>
+								</Stack>
+							))}
+						</Stack>
+					</Box>
 					<TextField
 						autoFocus
 						label="Polling interval (seconds)"

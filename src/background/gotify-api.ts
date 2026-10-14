@@ -1,13 +1,12 @@
 import type {
 	CurrentUser,
 	GotifyApplication,
-	GotifyConfig,
 	GotifyMessage,
 	PagedMessages,
+	ServerConfig,
 } from "../shared/types";
 
 const MESSAGE_PAGE_SIZE = 200;
-const DELETE_ORIGIN_RULE_ID = 1;
 
 type NetworkRule = {
 	id: number;
@@ -30,6 +29,7 @@ type NetworkApis = {
 			removeRuleIds: number[];
 			addRules: NetworkRule[];
 		}) => Promise<void>;
+		getDynamicRules?: () => Promise<Array<{ id: number }>>;
 	};
 	webRequest?: {
 		onBeforeSendHeaders: {
@@ -51,7 +51,7 @@ type NetworkApis = {
 const networkApis = browser as unknown as NetworkApis;
 const manifestVersion = browser.runtime.getManifest().manifest_version;
 const extensionRootUrl = browser.runtime.getURL("");
-let firefoxGotifyBaseUrl: string | undefined;
+let firefoxGotifyBaseUrls = new Set<string>();
 
 const escapeRegex = (value: string): string =>
 	value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -83,15 +83,17 @@ const apiPathFor = (
 
 const shouldRemoveOrigin = (
 	details: { method: string; type: string; url: string },
-	baseUrl: string,
+	baseUrls: string[],
 ): boolean => {
-	const path = apiPathFor(details.url, baseUrl);
-	return (
-		details.method === "DELETE" &&
-		(path === "/message" ||
+	if (details.method !== "DELETE") return false;
+	return baseUrls.some((baseUrl) => {
+		const path = apiPathFor(details.url, baseUrl);
+		return (
+			path === "/message" ||
 			/^\/message\/\d+$/.test(path ?? "") ||
-			/^\/application\/\d+\/message$/.test(path ?? ""))
-	);
+			/^\/application\/\d+\/message$/.test(path ?? "")
+		);
+	});
 };
 
 if (manifestVersion === 2 && networkApis.webRequest) {
@@ -99,8 +101,8 @@ if (manifestVersion === 2 && networkApis.webRequest) {
 		(details) => {
 			if (
 				!details.originUrl?.startsWith(extensionRootUrl) ||
-				!firefoxGotifyBaseUrl ||
-				!shouldRemoveOrigin(details, firefoxGotifyBaseUrl)
+				firefoxGotifyBaseUrls.size === 0 ||
+				!shouldRemoveOrigin(details, [...firefoxGotifyBaseUrls])
 			) {
 				return {};
 			}
@@ -122,9 +124,11 @@ export const normalizeBaseUrl = (rawUrl: string): string =>
 	new URL(rawUrl).toString().replace(/\/+$/, "");
 
 export const configureOriginBypass = async (
-	config: GotifyConfig | null,
+	servers: ServerConfig[] | null,
 ): Promise<void> => {
-	firefoxGotifyBaseUrl = config?.baseUrl;
+	firefoxGotifyBaseUrls = new Set(
+		(servers ?? []).map((server) => server.baseUrl),
+	);
 	if (manifestVersion !== 3) {
 		return;
 	}
@@ -134,39 +138,45 @@ export const configureOriginBypass = async (
 		throw new Error("Browser cannot configure Gotify network requests");
 	}
 
-	if (!config) {
-		await declarativeNetRequest.updateDynamicRules({
-			removeRuleIds: [DELETE_ORIGIN_RULE_ID],
-			addRules: [],
-		});
-		return;
-	}
-
-	const deleteRule: NetworkRule = {
-		id: DELETE_ORIGIN_RULE_ID,
+	// Dynamic rules persist across service worker restarts, so ids installed
+	// by a previous worker session may already occupy the ids this call wants
+	// to add (Chrome rejects duplicate ids). Remove every existing dynamic
+	// rule — this extension is their only writer — plus the incoming ids, and
+	// re-add the desired set in the same atomic update.
+	const existingRules = declarativeNetRequest.getDynamicRules
+		? await declarativeNetRequest.getDynamicRules()
+		: [];
+	const addRules: NetworkRule[] = (servers ?? []).map((server, index) => ({
+		id: index + 1,
 		priority: 1,
 		action: {
 			type: "modifyHeaders",
 			requestHeaders: [{ header: "Origin", operation: "remove" }],
 		},
 		condition: {
-			regexFilter: `^${escapeRegex(config.baseUrl)}/(?:message(?:/[0-9]+)?|application/[0-9]+/message)(?:\\?.*)?$`,
+			regexFilter: `^${escapeRegex(server.baseUrl)}/(?:message(?:/[0-9]+)?|application/[0-9]+/message)(?:\\?.*)?$`,
 			initiatorDomains: [browser.runtime.id],
 			requestMethods: ["delete"],
 			resourceTypes: ["xmlhttprequest"],
 		},
-	};
+	}));
+	const removeRuleIds = [
+		...new Set([
+			...existingRules.map((rule) => rule.id),
+			...addRules.map((rule) => rule.id),
+		]),
+	];
 
 	await declarativeNetRequest.updateDynamicRules({
-		removeRuleIds: [DELETE_ORIGIN_RULE_ID],
-		addRules: [deleteRule],
+		removeRuleIds,
+		addRules,
 	});
 };
 
 const isAbsoluteUrl = (value: string): boolean => /^https?:\/\//i.test(value);
 
 export const request = (
-	config: GotifyConfig,
+	config: ServerConfig,
 	path: string,
 	init?: RequestInit,
 ) =>
@@ -182,7 +192,7 @@ export const request = (
 	});
 
 export const fetchApplications = async (
-	config: GotifyConfig,
+	config: ServerConfig,
 ): Promise<Record<string, GotifyApplication>> => {
 	const response = await request(config, "/application");
 	if (!response.ok) {
@@ -195,7 +205,7 @@ export const fetchApplications = async (
 };
 
 export const fetchAllMessages = async (
-	config: GotifyConfig,
+	config: ServerConfig,
 	applicationId?: number,
 ): Promise<GotifyMessage[]> => {
 	let path =
@@ -225,7 +235,7 @@ export const fetchAllMessages = async (
 };
 
 export const fetchMessagesAfter = async (
-	config: GotifyConfig,
+	config: ServerConfig,
 	afterId: number,
 ): Promise<GotifyMessage[]> => {
 	let path = `/message?limit=${MESSAGE_PAGE_SIZE}`;
@@ -257,7 +267,7 @@ export const fetchMessagesAfter = async (
 };
 
 export const getLatestMessageId = async (
-	config: GotifyConfig,
+	config: ServerConfig,
 ): Promise<number> => {
 	const response = await request(config, "/message?limit=1");
 	if (!response.ok) {
@@ -268,7 +278,7 @@ export const getLatestMessageId = async (
 };
 
 export const validateClientToken = async (
-	config: GotifyConfig,
+	config: ServerConfig,
 ): Promise<CurrentUser> => {
 	const response = await request(config, "/current/user");
 	if (!response.ok) {

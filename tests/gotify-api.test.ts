@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import type { GotifyConfig, GotifyMessage } from "../src/shared/types";
+import type { GotifyMessage, ServerConfig } from "../src/shared/types";
 
 Object.assign(globalThis, {
 	browser: {
@@ -13,7 +13,8 @@ Object.assign(globalThis, {
 
 const { fetchMessagesAfter } = await import("../src/background/gotify-api");
 
-const config: GotifyConfig = {
+const config: ServerConfig = {
+	id: "server-1",
 	baseUrl: "https://gotify.example.test",
 	authMode: "token",
 	token: "client-token",

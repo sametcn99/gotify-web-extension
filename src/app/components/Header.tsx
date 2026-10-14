@@ -6,22 +6,34 @@ import Settings from "@mui/icons-material/Settings";
 import SystemUpdateAlt from "@mui/icons-material/SystemUpdateAlt";
 import {
 	AppBar,
+	Chip,
+	Divider,
 	IconButton,
+	MenuItem,
 	Stack,
 	Toolbar,
 	Tooltip,
 	Typography,
 } from "@mui/material";
+import Select, { type SelectChangeEvent } from "@mui/material/Select";
 import type { UpdateInfo } from "../../shared/types";
+import type { ServerListItem } from "../hooks/useGotify";
+import { serverHostname } from "../utils";
+
+const ADD_SERVER_VALUE = "__add-server__";
 
 interface HeaderProps {
 	authenticated: boolean;
+	servers: ServerListItem[];
+	activeServerId?: string;
 	messagesLoading: boolean;
 	submitting: boolean;
 	themeMode: string;
 	themeIcon: React.ReactNode;
 	updateInfo?: UpdateInfo;
 	onToggleNav: () => void;
+	onSelectServer: (serverId: string) => void;
+	onAddServer: () => void;
 	onRefresh: () => void;
 	onOpenSettings: () => void;
 	onLogout: () => void;
@@ -30,17 +42,29 @@ interface HeaderProps {
 
 export const Header = ({
 	authenticated,
+	servers,
+	activeServerId,
 	messagesLoading,
 	submitting,
 	themeMode,
 	themeIcon,
 	updateInfo,
 	onToggleNav,
+	onSelectServer,
+	onAddServer,
 	onRefresh,
 	onOpenSettings,
 	onLogout,
 	onToggleTheme,
 }: HeaderProps) => {
+	const handleServerChange = (event: SelectChangeEvent<string>) => {
+		if (event.target.value === ADD_SERVER_VALUE) {
+			onAddServer();
+			return;
+		}
+		onSelectServer(event.target.value);
+	};
+
 	return (
 		<AppBar
 			position="fixed"
@@ -60,17 +84,59 @@ export const Header = ({
 							<MenuIcon />
 						</IconButton>
 					)}
-					<Typography
-						variant="h5"
-						sx={{
-							userSelect: "none",
-							msUserSelect: "none",
-							MozUserSelect: "none",
-							WebkitUserSelect: "none",
-						}}
-					>
-						Gotify
-					</Typography>
+					{authenticated ? (
+						<Select
+							value={activeServerId ?? ""}
+							onChange={handleServerChange}
+							variant="standard"
+							disableUnderline
+							disabled={submitting}
+							sx={{
+								color: "inherit",
+								"& .MuiSelect-select": {
+									fontSize: (theme) => theme.typography.h6.fontSize,
+									fontWeight: (theme) => theme.typography.h6.fontWeight,
+									pt: 0,
+									pb: 0,
+								},
+								"&.Mui-disabled": { color: "inherit" },
+							}}
+							aria-label="Active server"
+						>
+							{servers.map((server) => (
+								<MenuItem key={server.id} value={server.id}>
+									<Stack
+										direction="row"
+										spacing={1}
+										sx={{ alignItems: "center" }}
+									>
+										<span>{serverHostname(server.baseUrl)}</span>
+										{server.unreadCount > 0 && (
+											<Chip
+												size="small"
+												color="primary"
+												label={server.unreadCount}
+											/>
+										)}
+									</Stack>
+								</MenuItem>
+							))}
+							<Divider />
+							<MenuItem value={ADD_SERVER_VALUE}>Add server…</MenuItem>
+						</Select>
+					) : (
+						<Typography
+							variant="h5"
+							sx={{
+								userSelect: "none",
+								msUserSelect: "none",
+								MozUserSelect: "none",
+								WebkitUserSelect: "none",
+							}}
+						>
+							Gotify
+						</Typography>
+					)}
 				</Stack>
 				<Stack direction="row" sx={{ alignItems: "center" }}>
 					{authenticated && (
@@ -94,12 +160,12 @@ export const Header = ({
 									<Settings />
 								</IconButton>
 							</Tooltip>
-							<Tooltip title="Logout" arrow>
+							<Tooltip title="Remove this server" arrow>
 								<IconButton
 									color="inherit"
 									onClick={onLogout}
 									disabled={submitting}
-									aria-label="Logout"
+									aria-label="Remove this server"
 								>
 									<ExitToApp />
 								</IconButton>

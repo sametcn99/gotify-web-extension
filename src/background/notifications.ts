@@ -4,6 +4,12 @@ import type {
 	NotificationSettings,
 } from "../shared/types";
 
+export interface NotifyOptions {
+	serverId: string;
+	/** Hostname label shown in the title when several servers are configured. */
+	serverLabel?: string;
+}
+
 const parseTimeOfDay = (value: string): number | undefined => {
 	const match = /^(\d{2}):(\d{2})$/.exec(value);
 	if (!match) return undefined;
@@ -32,22 +38,29 @@ export const canNotifyMessage = (
 	!settings.disabledApplicationIds.includes(message.appid) &&
 	!isQuietHours(settings);
 
+const titleWithLabel = (title: string, label?: string): string =>
+	label ? `[${label}] ${title}` : title;
+
 export const notifyMessages = async (
 	messages: GotifyMessage[],
 	applications: Record<string, GotifyApplication>,
+	options: NotifyOptions,
 ): Promise<string[]> => {
 	const notificationIds: string[] = [];
 	if (messages.length === 1) {
 		const [message] = messages;
-		const notificationId = `gotify-${message.id}`;
+		const notificationId = `gotify-${options.serverId}-${message.id}`;
 		notificationIds.push(notificationId);
 		const applicationName = applications[String(message.appid)]?.name;
 		await browser.notifications.create(notificationId, {
 			type: "basic",
 			iconUrl: browser.runtime.getURL("images/icon.png"),
-			title: [applicationName, message.title?.trim() || "Gotify Notification"]
-				.filter(Boolean)
-				.join(" | "),
+			title: titleWithLabel(
+				[applicationName, message.title?.trim() || "Gotify Notification"]
+					.filter(Boolean)
+					.join(" | "),
+				options.serverLabel,
+			),
 			message: message.message?.trim() || "(empty message)",
 			priority: Math.max(Math.min(message.priority ?? 0, 2), -2),
 			requireInteraction: (message.priority ?? 0) >= 8,
@@ -57,12 +70,12 @@ export const notifyMessages = async (
 			...messages.map((message) => message.priority ?? 0),
 		);
 		const lastMessage = messages[messages.length - 1];
-		const notificationId = `gotify-batch-${lastMessage.id}`;
+		const notificationId = `gotify-batch-${options.serverId}-${lastMessage.id}`;
 		notificationIds.push(notificationId);
 		await browser.notifications.create(notificationId, {
 			type: "basic",
 			iconUrl: browser.runtime.getURL("images/icon.png"),
-			title: "Gotify Notifications",
+			title: titleWithLabel("Gotify Notifications", options.serverLabel),
 			message: `${messages.length} new notifications`,
 			priority: Math.max(Math.min(highestPriority, 2), -2),
 			requireInteraction: highestPriority >= 8,

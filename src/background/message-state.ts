@@ -1,4 +1,4 @@
-import type { GotifyMessage, RuntimeState } from "../shared/types";
+import type { GotifyMessage, ServerRuntimeState } from "../shared/types";
 
 export const deduplicateAndSortMessages = (messages: GotifyMessage[]) => {
 	const uniqueMessages = new Map<number, GotifyMessage>();
@@ -12,7 +12,7 @@ export const normalizeMessagePreview = (
 ): GotifyMessage[] => deduplicateAndSortMessages(messages).slice(0, limit);
 
 export const getProcessingCursor = (
-	state: RuntimeState,
+	state: ServerRuntimeState,
 ): number | undefined => {
 	const candidates = [
 		state.lastProcessedMessageId,

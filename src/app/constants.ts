@@ -1,8 +1,9 @@
 import type { RuntimeState } from "../shared/types";
 
 export const initialState: RuntimeState = {
-	status: "logged_out",
-	recentMessages: [],
+	serverOrder: [],
+	servers: {},
+	unreadCount: 0,
 };
 export const DEFAULT_POLL_INTERVAL_SECONDS = 60;
 export const MIN_POLL_INTERVAL_SECONDS = 5;

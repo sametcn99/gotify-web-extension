@@ -2,6 +2,7 @@ import "@fontsource/roboto";
 import { Box, CssBaseline, ThemeProvider } from "@mui/material";
 import { SnackbarProvider } from "notistack";
 import { useEffect, useState } from "react";
+import { AddServerDialog } from "./components/AddServerDialog";
 import { ConfirmDeleteDialog } from "./components/ConfirmDeleteDialog";
 import { Header } from "./components/Header";
 import { LoginForm } from "./components/LoginForm";
@@ -14,10 +15,15 @@ import {
 } from "./constants";
 import { useGotify } from "./hooks/useGotify";
 import { useThemeMode } from "./hooks/useThemeMode";
+import { serverHostname } from "./utils";
 
 const App = () => {
 	const {
 		state,
+		activeServerId,
+		activeServerState,
+		serverList,
+		setActiveServer,
 		loading,
 		submitting,
 		messagesLoading,
@@ -37,8 +43,8 @@ const App = () => {
 		disabledApplicationIds,
 		setDisabledApplicationIds,
 		loadMessages,
-		login,
-		logout,
+		addServer,
+		removeServer,
 		saveSettings,
 		deleteMessage,
 		deleteAllMessages,
@@ -49,24 +55,46 @@ const App = () => {
 
 	const [settingsOpen, setSettingsOpen] = useState(false);
 	const [deleteAllOpen, setDeleteAllOpen] = useState(false);
+	const [addServerOpen, setAddServerOpen] = useState(false);
 	const [navOpen, setNavOpen] = useState(false);
 	const [selectedApplicationId, setSelectedApplicationId] = useState<number>();
+	const [confirmRemoveServerId, setConfirmRemoveServerId] = useState<string>();
 
-	const authenticated = Boolean(state.config);
-	const applicationList = Object.values(state.applications ?? {}).sort((a, b) =>
-		a.name.localeCompare(b.name),
-	);
+	const authenticated = serverList.length > 0;
+	const activeBaseUrl = activeServerState?.config?.baseUrl ?? "";
+	const applicationList = Object.values(
+		activeServerState?.applications ?? {},
+	).sort((a, b) => a.name.localeCompare(b.name));
+	// A selection from another server is ignored instead of being reset, so
+	// switching back and forth preserves each server's application filter.
+	const applicationIds = new Set(applicationList.map((app) => app.id));
+	const effectiveSelectedApplicationId =
+		selectedApplicationId !== undefined &&
+		applicationIds.has(selectedApplicationId)
+			? selectedApplicationId
+			: undefined;
 	const selectedApplication =
-		selectedApplicationId === undefined
+		effectiveSelectedApplicationId === undefined
 			? undefined
-			: state.applications?.[String(selectedApplicationId)];
+			: activeServerState?.applications?.[
+					String(effectiveSelectedApplicationId)
+				];
 
 	useEffect(() => {
-		if (authenticated) void loadMessages(selectedApplicationId);
-	}, [authenticated, loadMessages, selectedApplicationId]);
+		if (authenticated && activeServerId) {
+			void loadMessages(activeServerId, effectiveSelectedApplicationId);
+		}
+	}, [
+		authenticated,
+		activeServerId,
+		loadMessages,
+		effectiveSelectedApplicationId,
+	]);
 
 	const handleRefresh = async () => {
-		await loadMessages(selectedApplicationId);
+		if (activeServerId) {
+			await loadMessages(activeServerId, effectiveSelectedApplicationId);
+		}
 	};
 
 	const handleSaveSettings = () => {
@@ -83,21 +111,30 @@ const App = () => {
 		void saveSettings(() => setSettingsOpen(false));
 	};
 
+	const serverPendingRemoval =
+		confirmRemoveServerId === undefined
+			? undefined
+			: serverList.find((server) => server.id === confirmRemoveServerId);
+
 	return (
 		<ThemeProvider theme={theme}>
 			<SnackbarProvider>
 				<CssBaseline />
 				<Header
 					authenticated={authenticated}
+					servers={serverList}
+					activeServerId={activeServerId}
 					messagesLoading={messagesLoading}
 					submitting={submitting}
 					themeMode={themeMode}
 					themeIcon={themeIcon}
 					updateInfo={state.updateInfo}
 					onToggleNav={() => setNavOpen((prev) => !prev)}
+					onSelectServer={setActiveServer}
+					onAddServer={() => setAddServerOpen(true)}
 					onRefresh={() => void handleRefresh()}
 					onOpenSettings={() => setSettingsOpen(true)}
-					onLogout={() => void logout(() => setSettingsOpen(false))}
+					onLogout={() => setConfirmRemoveServerId(activeServerId)}
 					onToggleTheme={toggleTheme}
 				/>
 
@@ -120,7 +157,7 @@ const App = () => {
 							submitting={submitting}
 							onBaseUrlChange={setBaseUrl}
 							onTokenChange={setToken}
-							onSubmit={() => void login()}
+							onSubmit={() => void addServer({ baseUrl, token })}
 						/>
 					) : (
 						<Box
@@ -130,18 +167,18 @@ const App = () => {
 							}}
 						>
 							<Sidebar
-								baseUrl={baseUrl}
+								baseUrl={activeBaseUrl}
 								applications={applicationList}
-								selectedApplicationId={selectedApplicationId}
+								selectedApplicationId={effectiveSelectedApplicationId}
 								mobileOpen={navOpen}
 								onCloseMobile={() => setNavOpen(false)}
 								onSelectApplication={setSelectedApplicationId}
 							/>
 							<MessageList
 								selectedApplication={selectedApplication}
-								baseUrl={baseUrl}
+								baseUrl={activeBaseUrl}
 								messages={messages}
-								applications={state.applications}
+								applications={activeServerState?.applications}
 								loading={loading}
 								messagesLoading={messagesLoading}
 								submitting={submitting}
@@ -153,9 +190,22 @@ const App = () => {
 					)}
 				</Box>
 
+				<AddServerDialog
+					open={addServerOpen}
+					submitting={submitting}
+					onClose={() => setAddServerOpen(false)}
+					onSubmit={(url, serverToken) =>
+						void addServer({ baseUrl: url, token: serverToken }, () =>
+							setAddServerOpen(false),
+						)
+					}
+				/>
+
 				<SettingsDialog
 					open={authenticated && settingsOpen}
 					submitting={submitting}
+					servers={serverList}
+					activeServerId={activeServerId}
 					pollIntervalSeconds={pollIntervalSeconds}
 					quietHoursEnabled={quietHoursEnabled}
 					quietHoursStart={quietHoursStart}
@@ -164,6 +214,11 @@ const App = () => {
 					applications={applicationList}
 					onClose={() => setSettingsOpen(false)}
 					onSave={handleSaveSettings}
+					onAddServer={() => {
+						setSettingsOpen(false);
+						setAddServerOpen(true);
+					}}
+					onRemoveServer={(serverId) => setConfirmRemoveServerId(serverId)}
 					onPollIntervalChange={setPollIntervalSeconds}
 					onQuietHoursEnabledChange={setQuietHoursEnabled}
 					onQuietHoursStartChange={setQuietHoursStart}
@@ -177,10 +232,30 @@ const App = () => {
 					selectedApplication={selectedApplication}
 					onClose={() => setDeleteAllOpen(false)}
 					onConfirm={() =>
-						void deleteAllMessages(selectedApplicationId, () =>
+						void deleteAllMessages(effectiveSelectedApplicationId, () =>
 							setDeleteAllOpen(false),
 						)
 					}
+				/>
+
+				<ConfirmDeleteDialog
+					open={confirmRemoveServerId !== undefined}
+					submitting={submitting}
+					title="Remove server"
+					description={
+						serverPendingRemoval
+							? `Remove ${serverHostname(serverPendingRemoval.baseUrl)} and its stored token? Messages on the server are not deleted.`
+							: undefined
+					}
+					confirmLabel="Remove"
+					onClose={() => setConfirmRemoveServerId(undefined)}
+					onConfirm={() => {
+						if (confirmRemoveServerId === undefined) return;
+						void removeServer(confirmRemoveServerId, () => {
+							setConfirmRemoveServerId(undefined);
+							setSettingsOpen(false);
+						});
+					}}
 				/>
 			</SnackbarProvider>
 		</ThemeProvider>

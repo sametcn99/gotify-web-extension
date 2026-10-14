@@ -12,6 +12,9 @@ interface ConfirmDeleteDialogProps {
 	open: boolean;
 	submitting: boolean;
 	selectedApplication?: GotifyApplication;
+	title?: string;
+	description?: string;
+	confirmLabel?: string;
 	onClose: () => void;
 	onConfirm: () => void;
 }
@@ -20,16 +23,21 @@ export const ConfirmDeleteDialog = ({
 	open,
 	submitting,
 	selectedApplication,
+	title = "Confirm Delete",
+	description,
+	confirmLabel = "Delete All",
 	onClose,
 	onConfirm,
 }: ConfirmDeleteDialogProps) => {
 	return (
 		<Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth>
-			<DialogTitle>Confirm Delete</DialogTitle>
+			<DialogTitle>{title}</DialogTitle>
 			<DialogContent>
 				<Typography>
-					Delete all messages
-					{selectedApplication ? ` from ${selectedApplication.name}` : ""}?
+					{description ??
+						`Delete all messages${
+							selectedApplication ? ` from ${selectedApplication.name}` : ""
+						}?`}
 				</Typography>
 			</DialogContent>
 			<DialogActions>
@@ -42,7 +50,7 @@ export const ConfirmDeleteDialog = ({
 					onClick={onConfirm}
 					disabled={submitting}
 				>
-					Delete All
+					{confirmLabel}
 				</Button>
 			</DialogActions>
 		</Dialog>
