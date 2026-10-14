@@ -40,3 +40,6 @@ extension-env.d.ts
 .env
 .env*
 !.env.example
+# e2e browser profiles
+.e2e/.profile*
+.zcode/

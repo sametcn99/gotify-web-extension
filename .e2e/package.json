@@ -1,0 +1,8 @@
+{
+	"name": "gotify-web-extension-e2e",
+	"private": true,
+	"type": "module",
+	"dependencies": {
+		"playwright": "^1.64.1"
+	}
+}
