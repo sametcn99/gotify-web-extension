@@ -32,38 +32,10 @@ export const canNotifyMessage = (
 	!settings.disabledApplicationIds.includes(message.appid) &&
 	!isQuietHours(settings);
 
-const findHttpUrl = (value: unknown): string | undefined => {
-	if (!value || typeof value !== "object") return undefined;
-	for (const [key, nestedValue] of Object.entries(
-		value as Record<string, unknown>,
-	)) {
-		if (
-			["url", "href", "link"].includes(key.toLowerCase()) &&
-			typeof nestedValue === "string"
-		) {
-			try {
-				const url = new URL(nestedValue);
-				if (url.protocol === "http:" || url.protocol === "https:") {
-					return nestedValue;
-				}
-			} catch {
-				// Continue searching nested extras.
-			}
-		}
-		const nestedUrl = findHttpUrl(nestedValue);
-		if (nestedUrl) return nestedUrl;
-	}
-	return undefined;
-};
-
 export const notifyMessages = async (
 	messages: GotifyMessage[],
 	applications: Record<string, GotifyApplication>,
-): Promise<{
-	notificationIds: string[];
-	targets: Record<string, string>;
-}> => {
-	const notificationTargets: Record<string, string> = {};
+): Promise<string[]> => {
 	const notificationIds: string[] = [];
 	if (messages.length === 1) {
 		const [message] = messages;
@@ -80,8 +52,6 @@ export const notifyMessages = async (
 			priority: Math.max(Math.min(message.priority ?? 0, 2), -2),
 			requireInteraction: (message.priority ?? 0) >= 8,
 		});
-		const targetUrl = findHttpUrl(message.extras);
-		if (targetUrl) notificationTargets[notificationId] = targetUrl;
 	} else if (messages.length > 1) {
 		const highestPriority = Math.max(
 			...messages.map((message) => message.priority ?? 0),
@@ -97,9 +67,7 @@ export const notifyMessages = async (
 			priority: Math.max(Math.min(highestPriority, 2), -2),
 			requireInteraction: highestPriority >= 8,
 		});
-		const targetUrl = findHttpUrl(lastMessage.extras);
-		if (targetUrl) notificationTargets[notificationId] = targetUrl;
 	}
 
-	return { notificationIds, targets: notificationTargets };
+	return notificationIds;
 };

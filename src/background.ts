@@ -41,7 +41,6 @@ const UPDATE_CHECK_INTERVAL_MINUTES = 12 * 60;
 const MIN_POLL_INTERVAL_SECONDS = 5;
 const MAX_POLL_INTERVAL_SECONDS = 3600;
 const MAX_RECENT_MESSAGES = 40;
-const MAX_NOTIFICATION_TARGETS = 100;
 
 let pollingTimer: ReturnType<typeof setInterval> | undefined;
 let syncInProgress = false;
@@ -383,28 +382,16 @@ const processIncomingMessages = (
 		}
 
 		try {
-			const notificationResult = await notifyMessages(
+			const notificationIds = await notifyMessages(
 				messagesToNotify,
 				applications ?? {},
 			);
 			if (!(await isActiveConnection(config, generation))) {
 				await Promise.all(
-					notificationResult.notificationIds.map((id) =>
-						browser.notifications.clear(id),
-					),
+					notificationIds.map((id) => browser.notifications.clear(id)),
 				);
 				return loadState();
 			}
-			const notificationTargets = {
-				...(previous.notificationTargets ?? {}),
-				...notificationResult.targets,
-			};
-			nextState = createRuntimeState(nextState, {
-				notificationTargets: Object.fromEntries(
-					Object.entries(notificationTargets).slice(-MAX_NOTIFICATION_TARGETS),
-				),
-			});
-			await saveState(nextState);
 		} catch {
 			// Cursor persistence is more important than replaying a failed native
 			// notification on every subsequent sync.
@@ -718,20 +705,7 @@ browser.runtime.onMessage.addListener(async (request: unknown) => {
 
 browser.notifications.onClicked.addListener(async (notificationId: string) => {
 	await browser.notifications.clear(notificationId);
-
-	const state = await loadState();
-	const targetUrl = state.notificationTargets?.[notificationId];
-	if (targetUrl) {
-		await browser.tabs.create({ url: targetUrl });
-		return;
-	}
-
-	const config = await loadConfig();
-	if (!config?.baseUrl) {
-		return;
-	}
-
-	await browser.tabs.create({ url: config.baseUrl });
+	await openUi();
 });
 
 const isFirefoxLike =

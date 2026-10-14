@@ -74,7 +74,6 @@ export interface RuntimeState {
 	notificationsInitialized?: boolean;
 	user?: CurrentUser;
 	applications?: Record<string, GotifyApplication>;
-	notificationTargets?: Record<string, string>;
 	config?: Omit<GotifyConfig, "token"> & { hasToken: boolean };
 	recentMessages: GotifyMessage[];
 	/** Messages received while the extension UI was not visible. */
