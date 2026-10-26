@@ -19,6 +19,67 @@ export const formatRelativeTime = (date: string): string => {
 	return `${Math.floor(hours / 24)} days ago`;
 };
 
+export interface DateFormatSetting {
+	/** "relative" shows "2 hours ago"; "absolute" shows the exact date. */
+	mode: "relative" | "absolute";
+	showYear: boolean;
+	showMonth: boolean;
+	showDay: boolean;
+	showHour: boolean;
+	showMinute: boolean;
+	showSecond: boolean;
+	hour12: boolean;
+}
+
+export const DEFAULT_DATE_FORMAT: DateFormatSetting = {
+	mode: "relative",
+	showYear: true,
+	showMonth: true,
+	showDay: true,
+	showHour: true,
+	showMinute: true,
+	showSecond: false,
+	hour12: false,
+};
+
+const pad = (value: number): string => String(value).padStart(2, "0");
+
+export const formatMessageDate = (
+	date: string,
+	setting: DateFormatSetting,
+): string => {
+	if (setting.mode === "relative") return formatRelativeTime(date);
+	const parsed = new Date(date);
+	if (Number.isNaN(parsed.getTime())) return formatRelativeTime(date);
+
+	const dateParts: string[] = [];
+	if (setting.showDay) dateParts.push(pad(parsed.getDate()));
+	if (setting.showMonth) dateParts.push(pad(parsed.getMonth() + 1));
+	if (setting.showYear) dateParts.push(String(parsed.getFullYear()));
+
+	let timeText = "";
+	// The hour anchors the time block; without it, lone minutes/seconds
+	// would render as a meaningless ":05"-style remnant.
+	if (setting.showHour) {
+		let hours = parsed.getHours();
+		let meridiem = "";
+		if (setting.hour12) {
+			meridiem = hours >= 12 ? "PM" : "AM";
+			hours = hours % 12 || 12;
+		}
+		const timeParts: string[] = [];
+		if (setting.showHour) timeParts.push(pad(hours));
+		if (setting.showMinute) timeParts.push(pad(parsed.getMinutes()));
+		if (setting.showSecond) timeParts.push(pad(parsed.getSeconds()));
+		timeText = timeParts.join(":");
+		if (meridiem) timeText += ` ${meridiem}`;
+	}
+
+	// Nothing selected would render an empty string; fall back to relative.
+	const formatted = [dateParts.join("."), timeText].filter(Boolean).join(" ");
+	return formatted || formatRelativeTime(date);
+};
+
 export const formatExtras = (
 	extras: Record<string, unknown> | undefined,
 ): string => {

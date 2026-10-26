@@ -2,6 +2,7 @@ import DeleteOutlined from "@mui/icons-material/DeleteOutlined";
 import {
 	Box,
 	Button,
+	Checkbox,
 	Chip,
 	Dialog,
 	DialogActions,
@@ -9,6 +10,8 @@ import {
 	DialogTitle,
 	FormControlLabel,
 	IconButton,
+	MenuItem,
+	Select,
 	Stack,
 	Switch,
 	TextField,
@@ -21,7 +24,11 @@ import {
 	MIN_POLL_INTERVAL_SECONDS,
 } from "../constants";
 import type { ServerListItem } from "../hooks/useGotify";
-import { serverHostname } from "../utils";
+import {
+	type DateFormatSetting,
+	formatMessageDate,
+	serverHostname,
+} from "../utils";
 
 interface SettingsDialogProps {
 	open: boolean;
@@ -34,6 +41,7 @@ interface SettingsDialogProps {
 	quietHoursEnd: string;
 	disabledApplicationIds: number[];
 	applications: GotifyApplication[];
+	dateFormat: DateFormatSetting;
 	onClose: () => void;
 	onSave: () => void;
 	onAddServer: () => void;
@@ -45,7 +53,17 @@ interface SettingsDialogProps {
 	onDisabledApplicationIdsChange: (
 		updater: (current: number[]) => number[],
 	) => void;
+	onDateFormatChange: (setting: DateFormatSetting) => void;
 }
+
+const DATE_COMPONENTS = [
+	["showDay", "Day"],
+	["showMonth", "Month"],
+	["showYear", "Year"],
+	["showHour", "Hour"],
+	["showMinute", "Minute"],
+	["showSecond", "Second"],
+] as const;
 
 export const SettingsDialog = ({
 	open,
@@ -58,6 +76,7 @@ export const SettingsDialog = ({
 	quietHoursEnd,
 	disabledApplicationIds,
 	applications,
+	dateFormat,
 	onClose,
 	onSave,
 	onAddServer,
@@ -67,6 +86,7 @@ export const SettingsDialog = ({
 	onQuietHoursStartChange,
 	onQuietHoursEndChange,
 	onDisabledApplicationIdsChange,
+	onDateFormatChange,
 }: SettingsDialogProps) => {
 	return (
 		<Dialog open={open} onClose={onClose} fullWidth maxWidth="sm">
@@ -196,6 +216,81 @@ export const SettingsDialog = ({
 								fullWidth
 							/>
 						</Stack>
+					</Box>
+					<Box>
+						<Typography variant="subtitle2" sx={{ mb: 0.5 }}>
+							Date display
+						</Typography>
+						<Select
+							fullWidth
+							size="small"
+							value={dateFormat.mode}
+							onChange={(event) =>
+								onDateFormatChange({
+									...dateFormat,
+									mode: event.target.value as DateFormatSetting["mode"],
+								})
+							}
+							inputProps={{ "aria-label": "Date display mode" }}
+						>
+							<MenuItem value="relative">Relative (e.g. 2 hours ago)</MenuItem>
+							<MenuItem value="absolute">Exact date and time</MenuItem>
+						</Select>
+						{dateFormat.mode === "absolute" && (
+							<>
+								<Stack
+									direction="row"
+									sx={{ flexWrap: "wrap", mt: 1, rowGap: 0.5 }}
+								>
+									{DATE_COMPONENTS.map(([key, label]) => (
+										<FormControlLabel
+											key={key}
+											sx={{ width: "45%" }}
+											control={
+												<Checkbox
+													checked={dateFormat[key]}
+													onChange={(event) =>
+														onDateFormatChange({
+															...dateFormat,
+															[key]: event.target.checked,
+														} as DateFormatSetting)
+													}
+												/>
+											}
+											label={label}
+										/>
+									))}
+								</Stack>
+								{dateFormat.showHour && (
+									<Select
+										fullWidth
+										size="small"
+										value={dateFormat.hour12 ? "12" : "24"}
+										onChange={(event) =>
+											onDateFormatChange({
+												...dateFormat,
+												hour12: event.target.value === "12",
+											})
+										}
+										inputProps={{ "aria-label": "Time notation" }}
+										sx={{ mt: 1 }}
+									>
+										<MenuItem value="24">24-hour</MenuItem>
+										<MenuItem value="12">12-hour (AM/PM)</MenuItem>
+									</Select>
+								)}
+								<Typography
+									variant="caption"
+									color="text.secondary"
+									sx={{ display: "block", mt: 1 }}
+								>
+									{`Preview: ${formatMessageDate(new Date().toISOString(), dateFormat)}`}
+								</Typography>
+							</>
+						)}
+						<Typography variant="caption" color="text.secondary">
+							Applies instantly to every server (extension-wide).
+						</Typography>
 					</Box>
 					{applications.length > 0 && (
 						<Box>

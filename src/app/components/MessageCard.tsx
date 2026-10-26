@@ -12,9 +12,10 @@ import {
 import Linkify from "linkify-react";
 import type { GotifyApplication, GotifyMessage } from "../../shared/types";
 import { MESSAGE_PREVIEW_LENGTH } from "../constants";
+import { useDateFormat } from "../hooks/useDateFormat";
 import {
 	formatExtras,
-	formatRelativeTime,
+	formatMessageDate,
 	getImageUrl,
 	priorityColor,
 } from "../utils";
@@ -42,6 +43,7 @@ export const MessageCard = ({
 	const isLong = body.length > MESSAGE_PREVIEW_LENGTH;
 	const application = applications?.[String(message.appid)];
 	const applicationName = application?.name ?? `App ${message.appid}`;
+	const { dateFormat } = useDateFormat();
 
 	return (
 		<Paper
@@ -84,7 +86,7 @@ export const MessageCard = ({
 						color="text.secondary"
 						sx={{ whiteSpace: "nowrap" }}
 					>
-						{formatRelativeTime(message.date)}
+						{formatMessageDate(message.date, dateFormat)}
 					</Typography>
 					<Tooltip title="Delete message" arrow>
 						<IconButton

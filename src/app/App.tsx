@@ -1,9 +1,10 @@
 import "@fontsource/roboto";
 import { Box, CssBaseline, ThemeProvider } from "@mui/material";
 import { SnackbarProvider } from "notistack";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AddServerDialog } from "./components/AddServerDialog";
 import { ConfirmDeleteDialog } from "./components/ConfirmDeleteDialog";
+import { ExportDialog } from "./components/ExportDialog";
 import { Header } from "./components/Header";
 import { LoginForm } from "./components/LoginForm";
 import { MessageList } from "./components/MessageList";
@@ -13,9 +14,23 @@ import {
 	MAX_POLL_INTERVAL_SECONDS,
 	MIN_POLL_INTERVAL_SECONDS,
 } from "./constants";
+import {
+	DateFormatProvider,
+	useDateFormatSetting,
+} from "./hooks/useDateFormat";
 import { useGotify } from "./hooks/useGotify";
 import { useThemeMode } from "./hooks/useThemeMode";
+import { filterMessages, type SortOrder, sortMessages } from "./message-view";
 import { serverHostname } from "./utils";
+
+const SORT_ORDER_STORAGE_KEY = "gotify-sort-order";
+
+const readStoredSortOrder = (): SortOrder => {
+	const stored = localStorage.getItem(SORT_ORDER_STORAGE_KEY);
+	return stored === "oldest" || stored === "priority" || stored === "newest"
+		? stored
+		: "newest";
+};
 
 const App = () => {
 	const {
@@ -52,13 +67,21 @@ const App = () => {
 	} = useGotify();
 
 	const { themeMode, theme, toggleTheme, themeIcon } = useThemeMode();
+	const { dateFormat, setDateFormat } = useDateFormatSetting();
 
 	const [settingsOpen, setSettingsOpen] = useState(false);
 	const [deleteAllOpen, setDeleteAllOpen] = useState(false);
 	const [addServerOpen, setAddServerOpen] = useState(false);
+	const [exportOpen, setExportOpen] = useState(false);
 	const [navOpen, setNavOpen] = useState(false);
 	const [selectedApplicationId, setSelectedApplicationId] = useState<number>();
 	const [confirmRemoveServerId, setConfirmRemoveServerId] = useState<string>();
+	const [searchText, setSearchText] = useState("");
+	const [sortOrder, setSortOrder] = useState<SortOrder>(readStoredSortOrder);
+
+	useEffect(() => {
+		localStorage.setItem(SORT_ORDER_STORAGE_KEY, sortOrder);
+	}, [sortOrder]);
 
 	const authenticated = serverList.length > 0;
 	const activeBaseUrl = activeServerState?.config?.baseUrl ?? "";
@@ -91,6 +114,23 @@ const App = () => {
 		effectiveSelectedApplicationId,
 	]);
 
+	// A stale search would silently hide another server's messages, so the
+	// search resets when the active server changes.
+	useEffect(() => {
+		if (activeServerId === undefined) return;
+		setSearchText("");
+	}, [activeServerId]);
+
+	const activeApplications = activeServerState?.applications;
+	const visibleMessages = useMemo(
+		() =>
+			sortMessages(
+				filterMessages(messages, activeApplications, { searchText }),
+				sortOrder,
+			),
+		[messages, activeApplications, searchText, sortOrder],
+	);
+
 	const handleRefresh = async () => {
 		if (activeServerId) {
 			await loadMessages(activeServerId, effectiveSelectedApplicationId);
@@ -119,144 +159,166 @@ const App = () => {
 	return (
 		<ThemeProvider theme={theme}>
 			<SnackbarProvider>
-				<CssBaseline />
-				<Header
-					authenticated={authenticated}
-					servers={serverList}
-					activeServerId={activeServerId}
-					messagesLoading={messagesLoading}
-					submitting={submitting}
-					themeMode={themeMode}
-					themeIcon={themeIcon}
-					updateInfo={state.updateInfo}
-					onToggleNav={() => setNavOpen((prev) => !prev)}
-					onSelectServer={setActiveServer}
-					onAddServer={() => setAddServerOpen(true)}
-					onRefresh={() => void handleRefresh()}
-					onOpenSettings={() => setSettingsOpen(true)}
-					onLogout={() => setConfirmRemoveServerId(activeServerId)}
-					onToggleTheme={toggleTheme}
-				/>
+				<DateFormatProvider value={{ dateFormat, setDateFormat }}>
+					<CssBaseline />
+					<Header
+						authenticated={authenticated}
+						servers={serverList}
+						activeServerId={activeServerId}
+						messagesLoading={messagesLoading}
+						submitting={submitting}
+						themeMode={themeMode}
+						themeIcon={themeIcon}
+						updateInfo={state.updateInfo}
+						onToggleNav={() => setNavOpen((prev) => !prev)}
+						onSelectServer={setActiveServer}
+						onAddServer={() => setAddServerOpen(true)}
+						onRefresh={() => void handleRefresh()}
+						onOpenSettings={() => setSettingsOpen(true)}
+						onLogout={() => setConfirmRemoveServerId(activeServerId)}
+						onToggleTheme={toggleTheme}
+					/>
 
-				<Box
-					component="main"
-					sx={{
-						pt: { xs: 8, sm: 11 },
-						px: { xs: 1.5, sm: 3 },
-						pb: 3,
-						ml: authenticated ? { xs: 0, sm: "250px" } : 0,
-						width: authenticated
-							? { xs: "100%", sm: "calc(100% - 250px)" }
-							: "100%",
-					}}
-				>
-					{!authenticated ? (
-						<LoginForm
-							baseUrl={baseUrl}
-							token={token}
-							submitting={submitting}
-							onBaseUrlChange={setBaseUrl}
-							onTokenChange={setToken}
-							onSubmit={() => void addServer({ baseUrl, token })}
-						/>
-					) : (
-						<Box
-							sx={{
-								maxWidth: 700,
-								mx: "auto",
-							}}
-						>
-							<Sidebar
-								baseUrl={activeBaseUrl}
-								applications={applicationList}
-								selectedApplicationId={effectiveSelectedApplicationId}
-								mobileOpen={navOpen}
-								onCloseMobile={() => setNavOpen(false)}
-								onSelectApplication={setSelectedApplicationId}
-							/>
-							<MessageList
-								selectedApplication={selectedApplication}
-								baseUrl={activeBaseUrl}
-								messages={messages}
-								applications={activeServerState?.applications}
-								loading={loading}
-								messagesLoading={messagesLoading}
+					<Box
+						component="main"
+						sx={{
+							pt: { xs: 8, sm: 11 },
+							px: { xs: 1.5, sm: 3 },
+							pb: 3,
+							ml: authenticated ? { xs: 0, sm: "250px" } : 0,
+							width: authenticated
+								? { xs: "100%", sm: "calc(100% - 250px)" }
+								: "100%",
+						}}
+					>
+						{!authenticated ? (
+							<LoginForm
+								baseUrl={baseUrl}
+								token={token}
 								submitting={submitting}
-								onRefresh={() => void handleRefresh()}
-								onDeleteAllOpen={() => setDeleteAllOpen(true)}
-								onDeleteMessage={(id) => void deleteMessage(id)}
+								onBaseUrlChange={setBaseUrl}
+								onTokenChange={setToken}
+								onSubmit={() => void addServer({ baseUrl, token })}
 							/>
-						</Box>
-					)}
-				</Box>
+						) : (
+							<Box
+								sx={{
+									maxWidth: 700,
+									mx: "auto",
+								}}
+							>
+								<Sidebar
+									baseUrl={activeBaseUrl}
+									applications={applicationList}
+									selectedApplicationId={effectiveSelectedApplicationId}
+									mobileOpen={navOpen}
+									onCloseMobile={() => setNavOpen(false)}
+									onSelectApplication={setSelectedApplicationId}
+								/>
+								<MessageList
+									selectedApplication={selectedApplication}
+									baseUrl={activeBaseUrl}
+									messages={visibleMessages}
+									totalCount={messages.length}
+									applications={activeApplications}
+									loading={loading}
+									messagesLoading={messagesLoading}
+									submitting={submitting}
+									searchText={searchText}
+									sortOrder={sortOrder}
+									onSearchTextChange={setSearchText}
+									onSortOrderChange={setSortOrder}
+									onRefresh={() => void handleRefresh()}
+									onDeleteAllOpen={() => setDeleteAllOpen(true)}
+									onExportOpen={() => setExportOpen(true)}
+									onDeleteMessage={(id) => void deleteMessage(id)}
+								/>
+							</Box>
+						)}
+					</Box>
 
-				<AddServerDialog
-					open={addServerOpen}
-					submitting={submitting}
-					onClose={() => setAddServerOpen(false)}
-					onSubmit={(url, serverToken) =>
-						void addServer({ baseUrl: url, token: serverToken }, () =>
-							setAddServerOpen(false),
-						)
-					}
-				/>
+					<AddServerDialog
+						open={addServerOpen}
+						submitting={submitting}
+						onClose={() => setAddServerOpen(false)}
+						onSubmit={(url, serverToken) =>
+							void addServer({ baseUrl: url, token: serverToken }, () =>
+								setAddServerOpen(false),
+							)
+						}
+					/>
 
-				<SettingsDialog
-					open={authenticated && settingsOpen}
-					submitting={submitting}
-					servers={serverList}
-					activeServerId={activeServerId}
-					pollIntervalSeconds={pollIntervalSeconds}
-					quietHoursEnabled={quietHoursEnabled}
-					quietHoursStart={quietHoursStart}
-					quietHoursEnd={quietHoursEnd}
-					disabledApplicationIds={disabledApplicationIds}
-					applications={applicationList}
-					onClose={() => setSettingsOpen(false)}
-					onSave={handleSaveSettings}
-					onAddServer={() => {
-						setSettingsOpen(false);
-						setAddServerOpen(true);
-					}}
-					onRemoveServer={(serverId) => setConfirmRemoveServerId(serverId)}
-					onPollIntervalChange={setPollIntervalSeconds}
-					onQuietHoursEnabledChange={setQuietHoursEnabled}
-					onQuietHoursStartChange={setQuietHoursStart}
-					onQuietHoursEndChange={setQuietHoursEnd}
-					onDisabledApplicationIdsChange={setDisabledApplicationIds}
-				/>
-
-				<ConfirmDeleteDialog
-					open={deleteAllOpen}
-					submitting={submitting}
-					selectedApplication={selectedApplication}
-					onClose={() => setDeleteAllOpen(false)}
-					onConfirm={() =>
-						void deleteAllMessages(effectiveSelectedApplicationId, () =>
-							setDeleteAllOpen(false),
-						)
-					}
-				/>
-
-				<ConfirmDeleteDialog
-					open={confirmRemoveServerId !== undefined}
-					submitting={submitting}
-					title="Remove server"
-					description={
-						serverPendingRemoval
-							? `Remove ${serverHostname(serverPendingRemoval.baseUrl)} and its stored token? Messages on the server are not deleted.`
-							: undefined
-					}
-					confirmLabel="Remove"
-					onClose={() => setConfirmRemoveServerId(undefined)}
-					onConfirm={() => {
-						if (confirmRemoveServerId === undefined) return;
-						void removeServer(confirmRemoveServerId, () => {
-							setConfirmRemoveServerId(undefined);
+					<SettingsDialog
+						open={authenticated && settingsOpen}
+						submitting={submitting}
+						servers={serverList}
+						activeServerId={activeServerId}
+						pollIntervalSeconds={pollIntervalSeconds}
+						quietHoursEnabled={quietHoursEnabled}
+						quietHoursStart={quietHoursStart}
+						quietHoursEnd={quietHoursEnd}
+						disabledApplicationIds={disabledApplicationIds}
+						applications={applicationList}
+						dateFormat={dateFormat}
+						onDateFormatChange={setDateFormat}
+						onClose={() => setSettingsOpen(false)}
+						onSave={handleSaveSettings}
+						onAddServer={() => {
 							setSettingsOpen(false);
-						});
-					}}
-				/>
+							setAddServerOpen(true);
+						}}
+						onRemoveServer={(serverId) => setConfirmRemoveServerId(serverId)}
+						onPollIntervalChange={setPollIntervalSeconds}
+						onQuietHoursEnabledChange={setQuietHoursEnabled}
+						onQuietHoursStartChange={setQuietHoursStart}
+						onQuietHoursEndChange={setQuietHoursEnd}
+						onDisabledApplicationIdsChange={setDisabledApplicationIds}
+					/>
+
+					<ExportDialog
+						open={authenticated && exportOpen}
+						messages={messages}
+						applications={activeApplications}
+						applicationList={applicationList}
+						selectedApplicationId={effectiveSelectedApplicationId}
+						hostname={serverHostname(activeBaseUrl)}
+						baseUrl={activeBaseUrl}
+						searchText={searchText}
+						onClose={() => setExportOpen(false)}
+					/>
+
+					<ConfirmDeleteDialog
+						open={deleteAllOpen}
+						submitting={submitting}
+						selectedApplication={selectedApplication}
+						onClose={() => setDeleteAllOpen(false)}
+						onConfirm={() =>
+							void deleteAllMessages(effectiveSelectedApplicationId, () =>
+								setDeleteAllOpen(false),
+							)
+						}
+					/>
+
+					<ConfirmDeleteDialog
+						open={confirmRemoveServerId !== undefined}
+						submitting={submitting}
+						title="Remove server"
+						description={
+							serverPendingRemoval
+								? `Remove ${serverHostname(serverPendingRemoval.baseUrl)} and its stored token? Messages on the server are not deleted.`
+								: undefined
+						}
+						confirmLabel="Remove"
+						onClose={() => setConfirmRemoveServerId(undefined)}
+						onConfirm={() => {
+							if (confirmRemoveServerId === undefined) return;
+							void removeServer(confirmRemoveServerId, () => {
+								setConfirmRemoveServerId(undefined);
+								setSettingsOpen(false);
+							});
+						}}
+					/>
+				</DateFormatProvider>
 			</SnackbarProvider>
 		</ThemeProvider>
 	);

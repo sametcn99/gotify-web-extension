@@ -101,7 +101,7 @@ export const Header = ({
 								},
 								"&.Mui-disabled": { color: "inherit" },
 							}}
-							aria-label="Active server"
+							inputProps={{ "aria-label": "Active server" }}
 						>
 							{servers.map((server) => (
 								<MenuItem key={server.id} value={server.id}>
